@@ -183,6 +183,10 @@ int main(int argc, char ** argv) {
     ctx_http.post("/v1/completions",           ex_wrapper(routes.post_completions_oai));
     ctx_http.post("/chat/completions",         ex_wrapper(routes.post_chat_completions));
     ctx_http.post("/v1/chat/completions",      ex_wrapper(routes.post_chat_completions));
+    ctx_http.post("/v1/remote-sessions/new-turn", ex_wrapper(routes.post_remote_session_new_turn));
+    ctx_http.post("/v1/remote-sessions/:session_id/append-turn", ex_wrapper(routes.post_remote_session_append_turn));
+    ctx_http.get ("/v1/remote-sessions",       ex_wrapper(routes.get_remote_sessions));
+    ctx_http.get ("/v1/remote-sessions/:session_id", ex_wrapper(routes.get_remote_session));
     ctx_http.post("/api/chat",                 ex_wrapper(routes.post_chat_completions)); // ollama specific endpoint
     ctx_http.post("/v1/responses",             ex_wrapper(routes.post_responses_oai));
     ctx_http.post("/responses",                ex_wrapper(routes.post_responses_oai));

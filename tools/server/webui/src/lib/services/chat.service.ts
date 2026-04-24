@@ -14,7 +14,12 @@ import {
 	ReasoningFormat,
 	UrlProtocol
 } from '$lib/enums';
-import type { ApiChatMessageContentPart, ApiChatCompletionToolCall } from '$lib/types/api';
+import type {
+	ApiChatMessageContentPart,
+	ApiChatCompletionToolCall,
+	ApiRemoteSessionTurnRequest,
+	ApiRemoteSessionTurnResponse
+} from '$lib/types/api';
 import type {
 	DatabaseMessageExtraMcpPrompt,
 	DatabaseMessageExtraMcpResource,
@@ -23,6 +28,24 @@ import type {
 import { modelsStore } from '$lib/stores/models.svelte';
 
 export class ChatService {
+	static async appendRemoteSessionTurn(
+		sessionId: string,
+		body: ApiRemoteSessionTurnRequest
+	): Promise<ApiRemoteSessionTurnResponse> {
+		const response = await fetch(`./v1/remote-sessions/${encodeURIComponent(sessionId)}/append-turn`, {
+			method: 'POST',
+			headers: getJsonHeaders(),
+			body: JSON.stringify(body)
+		});
+
+		if (!response.ok) {
+			const error = await ChatService.parseErrorResponse(response);
+			throw error;
+		}
+
+		return (await response.json()) as ApiRemoteSessionTurnResponse;
+	}
+
 	/**
 	 *
 	 *

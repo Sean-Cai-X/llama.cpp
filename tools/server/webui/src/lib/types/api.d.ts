@@ -316,6 +316,113 @@ export interface ApiChatCompletionResponse {
 	}>;
 }
 
+export interface ApiRemoteSessionSummary {
+	record_model: string;
+	session_id: string;
+	title: string;
+	updated_at: number;
+	last_turn_id: string;
+	source_type?: string;
+	task_group_id?: string;
+	handoff_from?: string;
+	handoff_to?: string;
+	takeover_relation?: string;
+	turn_count: number;
+	current_summary?: string;
+	last_task_id?: string;
+	last_result_ref?: string;
+	last_evidence_ref?: string;
+}
+
+export interface ApiRemoteSessionTurn {
+	turn_id: string;
+	timestamp: number;
+	write_mode: 'new' | 'append';
+	codex_request_id?: string;
+	agent_dispatch_id?: string;
+	task_id?: string;
+	task_group_id?: string;
+	source_type?: string;
+	source_label?: string;
+	source_detail?: string;
+	handoff_from?: string;
+	handoff_to?: string;
+	takeover_relation?: string;
+	speaker_mode?: string;
+	reasoning_level?: string;
+	prompt_purpose?: string;
+	response_mode?: string;
+	context_refs?: string[];
+	user_text?: string;
+	assistant_text?: string;
+	summary?: string;
+	direct_answer?: string;
+	next_action?: string;
+	confidence?: 'confirmed' | 'likely' | 'unclear' | 'blocked';
+	result_ref?: string;
+	evidence_ref?: string;
+	request_payload?: Record<string, unknown>;
+	response_payload?: Record<string, unknown>;
+}
+
+export interface ApiRemoteSession {
+	record_model: string;
+	session_id: string;
+	title: string;
+	created_at: number;
+	updated_at: number;
+	last_turn_id: string;
+	source_type?: string;
+	task_group_id?: string;
+	handoff_from?: string;
+	handoff_to?: string;
+	takeover_relation?: string;
+	turns: ApiRemoteSessionTurn[];
+}
+
+export interface ApiRemoteSessionListResponse {
+	record_model: string;
+	items: ApiRemoteSessionSummary[];
+}
+
+export interface ApiRemoteSessionTurnRequest {
+	task_id?: string;
+	codex_request_id?: string;
+	agent_dispatch_id?: string;
+	source_type?: string;
+	source_label?: string;
+	source_detail?: string;
+	handoff_from?: string;
+	handoff_to?: string;
+	takeover_relation?: string;
+	task_group_id?: string;
+	speaker_mode?: string;
+	reasoning_level?: string;
+	prompt_purpose?: string;
+	context_refs?: string[];
+	response_mode?: string;
+	prompt?: string;
+	user_text?: string;
+	query?: string;
+	result_ref?: string;
+	evidence_ref?: string;
+}
+
+export interface ApiRemoteSessionTurnResponse {
+	session_id: string;
+	turn_id: string;
+	write_mode: 'new' | 'append';
+	direct_answer: string;
+	evidence: string[];
+	next_action: string;
+	confidence: 'confirmed' | 'likely' | 'unclear' | 'blocked';
+	result_ref?: string;
+	evidence_ref?: string;
+	codex_request_id?: string;
+	agent_dispatch_id?: string;
+	raw_response?: Record<string, unknown>;
+}
+
 export interface ApiSlotData {
 	id: number;
 	id_task: number;

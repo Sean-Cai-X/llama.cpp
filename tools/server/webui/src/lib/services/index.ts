@@ -102,6 +102,7 @@ export { ChatService } from './chat.service';
  * @see chatStore in stores/chat.svelte.ts — uses DatabaseService directly for message CRUD during streaming
  */
 export { DatabaseService } from './database.service';
+export { RemoteSessionsService } from './remote-sessions.service';
 
 /**
  * **ModelsService** - Model management API communication

@@ -4,6 +4,7 @@
 #include "server-http.h"
 #include "server-task.h"
 #include "server-queue.h"
+#include "server-remote-session.h"
 
 #include "build-info.h"
 #include "common.h"
@@ -18,8 +19,10 @@
 #include <cstddef>
 #include <cinttypes>
 #include <exception>
+#include <fstream>
 #include <memory>
 #include <filesystem>
+#include <sstream>
 #include <utility>
 
 // fix problem with std::min and std::max
@@ -34,6 +37,346 @@
 using json = nlohmann::ordered_json;
 
 constexpr int HTTP_POLLING_SECONDS = 1;
+
+namespace {
+remote_session_store g_remote_session_store;
+
+static std::string get_string_or_empty(const json & value, const std::string & key) {
+    if (!value.is_object() || !value.contains(key) || value.at(key).is_null()) {
+        return "";
+    }
+    if (value.at(key).is_string()) {
+        return value.at(key).get<std::string>();
+    }
+    return value.at(key).dump();
+}
+
+static json get_array_or_empty(const json & value, const std::string & key) {
+    if (!value.is_object() || !value.contains(key) || !value.at(key).is_array()) {
+        return json::array();
+    }
+    return value.at(key);
+}
+
+static bool get_bool_or_default(const json & value, const std::string & key, bool fallback = false) {
+    if (!value.is_object() || !value.contains(key) || value.at(key).is_null()) {
+        return fallback;
+    }
+    if (value.at(key).is_boolean()) {
+        return value.at(key).get<bool>();
+    }
+    if (value.at(key).is_string()) {
+        const std::string lowered = string_to_lower(trim(value.at(key).get<std::string>()));
+        if (lowered == "true" || lowered == "1" || lowered == "yes" || lowered == "on" || lowered == "allow") {
+            return true;
+        }
+        if (lowered == "false" || lowered == "0" || lowered == "no" || lowered == "off" || lowered == "prompt") {
+            return false;
+        }
+    }
+    return fallback;
+}
+
+static std::string build_text_from_refs(const json & refs) {
+    if (!refs.is_array() || refs.empty()) {
+        return "";
+    }
+    std::ostringstream oss;
+    for (const auto & ref : refs) {
+        if (ref.is_string()) {
+            oss << "- " << ref.get<std::string>() << "\n";
+        }
+    }
+    return oss.str();
+}
+
+static json build_messages_from_session(
+        const std::optional<json> & existing_session,
+        const json & body,
+        bool append_mode) {
+    json messages = json::array();
+
+    if (body.contains("messages") && body.at("messages").is_array()) {
+        return body.at("messages");
+    }
+
+    if (append_mode && existing_session.has_value()) {
+        for (const auto & turn : existing_session->value("turns", json::array())) {
+            const std::string user_text = get_string_or_empty(turn, "user_text");
+            const std::string assistant_text = get_string_or_empty(turn, "assistant_text");
+            if (!user_text.empty()) {
+                messages.push_back({{"role", "user"}, {"content", user_text}});
+            }
+            if (!assistant_text.empty()) {
+                messages.push_back({{"role", "assistant"}, {"content", assistant_text}});
+            }
+        }
+    }
+
+    const std::string approval_mode = get_string_or_empty(body, "authorization_default");
+    const bool auto_authorize = get_bool_or_default(body, "auto_authorize", false);
+    std::string system_prompt =
+        "You are a controlled remote-session assistant. "
+        "Always produce a usable final answer for the user. "
+        "Do not output chain-of-thought, hidden reasoning, or 'Thinking Process'. "
+        "Reply in the user's language when possible. "
+        "If context is insufficient, still return a concise direct_answer that explicitly states what is missing. "
+        "When a JSON schema is requested, output only the final schema-compatible JSON object.";
+    if (!approval_mode.empty() || body.contains("auto_authorize")) {
+        system_prompt += auto_authorize
+            ? " Authorization default is allow."
+            : " Authorization default is prompt; do not assume hidden approvals or unavailable tool results.";
+    }
+    messages.push_back({{"role", "system"}, {"content", system_prompt}});
+
+    const std::string prompt_text =
+        get_string_or_empty(body, "prompt")
+        .empty() ? get_string_or_empty(body, "user_text") : get_string_or_empty(body, "prompt");
+    const std::string query_text =
+        prompt_text.empty() ? get_string_or_empty(body, "query") : prompt_text;
+    const std::string prompt_purpose = get_string_or_empty(body, "prompt_purpose");
+    const std::string primary_intent = get_string_or_empty(body, "primary_intent");
+    const std::string reasoning_level = get_string_or_empty(body, "reasoning_level");
+    const json context_refs = get_array_or_empty(body, "context_refs");
+    std::string user_content;
+    if (!reasoning_level.empty()) {
+        user_content += "reasoning_level=" + reasoning_level + "\n";
+    }
+    if (!prompt_purpose.empty()) {
+        user_content += "prompt_purpose=" + prompt_purpose + "\n";
+    }
+    if (!primary_intent.empty()) {
+        user_content += "primary_intent=" + primary_intent + "\n";
+    }
+    if (!context_refs.empty()) {
+        user_content += "context_refs:\n" + build_text_from_refs(context_refs);
+    }
+    user_content += query_text;
+
+    if (messages.empty() || !user_content.empty()) {
+        messages.push_back({{"role", "user"}, {"content", user_content}});
+    }
+
+    return messages;
+}
+
+static std::string flatten_message_content(const json & content) {
+    if (content.is_string()) {
+        return content.get<std::string>();
+    }
+    if (content.is_null()) {
+        return "";
+    }
+    if (!content.is_array()) {
+        return content.dump();
+    }
+
+    std::ostringstream oss;
+    bool first = true;
+    for (const auto & item : content) {
+        std::string piece;
+        if (item.is_string()) {
+            piece = item.get<std::string>();
+        } else if (item.is_object()) {
+            piece = get_string_or_empty(item, "text");
+            if (piece.empty()) {
+                piece = get_string_or_empty(item, "content");
+            }
+            if (piece.empty()) {
+                piece = item.dump();
+            }
+        } else {
+            piece = item.dump();
+        }
+        if (piece.empty()) {
+            continue;
+        }
+        if (!first) {
+            oss << "\n";
+        }
+        first = false;
+        oss << piece;
+    }
+    return oss.str();
+}
+
+static json parse_direct_payload(const std::string & content) {
+    try {
+        return json::parse(content);
+    } catch (...) {
+    }
+
+    const size_t fence_start = content.find("```");
+    if (fence_start != std::string::npos) {
+        const size_t line_end = content.find('\n', fence_start);
+        const size_t fence_end = line_end == std::string::npos ? std::string::npos : content.find("```", line_end + 1);
+        if (line_end != std::string::npos && fence_end != std::string::npos && fence_end > line_end) {
+            const std::string fenced = content.substr(line_end + 1, fence_end - line_end - 1);
+            try {
+                return json::parse(fenced);
+            } catch (...) {
+            }
+        }
+    }
+
+    const size_t brace_start = content.find('{');
+    const size_t brace_end = content.rfind('}');
+    if (brace_start != std::string::npos && brace_end != std::string::npos && brace_end > brace_start) {
+        const std::string candidate = content.substr(brace_start, brace_end - brace_start + 1);
+        try {
+            return json::parse(candidate);
+        } catch (...) {
+        }
+    }
+
+    return json::object();
+}
+
+static std::string first_nonempty_line(const std::string & text) {
+    std::istringstream iss(text);
+    std::string line;
+    while (std::getline(iss, line)) {
+        auto start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) {
+            continue;
+        }
+        auto end = line.find_last_not_of(" \t\r\n");
+        return line.substr(start, end - start + 1);
+    }
+    return "";
+}
+
+static std::string normalize_direct_answer_candidate(const std::string & text) {
+    auto trim = [](const std::string & value) -> std::string {
+        const size_t start = value.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) {
+            return "";
+        }
+        const size_t end = value.find_last_not_of(" \t\r\n");
+        return value.substr(start, end - start + 1);
+    };
+
+    auto lower_ascii = [](std::string value) -> std::string {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        return value;
+    };
+
+    std::istringstream iss(text);
+    std::string line;
+    while (std::getline(iss, line)) {
+        std::string candidate = trim(line);
+        if (candidate.empty()) {
+            continue;
+        }
+
+        std::string lower = lower_ascii(candidate);
+        if (lower == "thinking process:" ||
+            lower == "thinking process" ||
+            lower == "thought process:" ||
+            lower == "thought process" ||
+            candidate == "思考过程：" ||
+            candidate == "思考过程" ||
+            candidate == "推理过程：" ||
+            candidate == "推理过程") {
+            continue;
+        }
+
+        return candidate;
+    }
+
+    return "";
+}
+
+static json build_ventriloquy_result(
+        const json & response_json,
+        const std::string & session_id,
+        const std::string & turn_id,
+        const std::string & write_mode) {
+    const json structured = response_json.value("structured_conclusion", json::object());
+    const json message = response_json["choices"][0]["message"];
+    const std::string content = flatten_message_content(message.value("content", json()));
+    const std::string reasoning_content = flatten_message_content(message.value("reasoning_content", json()));
+    const std::string refusal = get_string_or_empty(message, "refusal");
+    const std::string choice_text = response_json["choices"][0].value("text", std::string());
+    const json parsed_content = parse_direct_payload(content);
+    const std::string structured_summary = get_string_or_empty(structured, "summary");
+    const std::string structured_next_action = get_string_or_empty(structured, "next_action");
+    const bool insufficient_context =
+        structured.is_object() && structured.value("insufficient_context", false);
+
+    json evidence = json::array();
+    if (parsed_content.is_object() && parsed_content.contains("evidence") && parsed_content["evidence"].is_array()) {
+        evidence = parsed_content["evidence"];
+    } else if (structured.contains("evidence_refs") && structured["evidence_refs"].is_array()) {
+        evidence = structured["evidence_refs"];
+    }
+
+    std::string direct_answer = parsed_content.value("direct_answer", "");
+    if (direct_answer.empty()) {
+        direct_answer = normalize_direct_answer_candidate(content);
+    }
+    if (direct_answer.empty()) {
+        direct_answer = normalize_direct_answer_candidate(choice_text);
+    }
+    if (direct_answer.empty()) {
+        direct_answer = refusal;
+    }
+    if (direct_answer.empty()) {
+        direct_answer = structured_summary;
+    }
+
+    if (direct_answer.empty() && evidence.is_array() && !evidence.empty() && evidence[0].is_string()) {
+        direct_answer = evidence[0].get<std::string>();
+    }
+
+    if (direct_answer.empty()) {
+        direct_answer = content;
+    }
+    if (direct_answer.empty()) {
+        direct_answer = choice_text;
+    }
+    if (direct_answer.empty()) {
+        direct_answer = insufficient_context
+            ? "Insufficient context to confirm; provide relevant status, logs, or tool results."
+            : "No usable final answer was generated; provide more evidence and retry.";
+    }
+
+    std::string next_action = parsed_content.value("next_action", "");
+    if (next_action.empty()) {
+        next_action = structured_next_action;
+    }
+    if (next_action.empty()) {
+        next_action = insufficient_context ? "collect_more_evidence" : "continue_session";
+    }
+
+    std::string confidence = parsed_content.value("confidence", std::string("unclear"));
+    if (confidence.empty() || confidence == "unclear") {
+        if (insufficient_context) {
+            confidence = "unclear";
+        } else if (!direct_answer.empty()) {
+            confidence = "likely";
+        }
+    }
+
+    if (confidence != "confirmed" && confidence != "likely" && confidence != "unclear" && confidence != "blocked") {
+        confidence = "unclear";
+    }
+
+    return json{
+        {"session_id", session_id},
+        {"turn_id", turn_id},
+        {"write_mode", write_mode},
+        {"direct_answer", direct_answer},
+        {"evidence", evidence},
+        {"next_action", next_action},
+        {"confidence", confidence},
+        {"ventriloquy_debug_version", "ventriloquy-fallback-v3"},
+        {"raw_response", response_json}
+    };
+}
+}
 
 static server_prompt_checkpoint server_get_checkpoint(llama_context * ctx, int id, int64_t n_tokens, llama_pos pos_min = -1, llama_pos pos_max = -1) {
     if (pos_min == -1) {
@@ -3389,6 +3732,196 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
     return res;
 }
 
+std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
+            const server_http_req & req,
+            const json & request_body,
+            const std::string & requested_session_id,
+            bool append_mode) {
+    auto res = create_response();
+
+    try {
+        const auto t_start_total = std::chrono::steady_clock::now();
+        json body = request_body;
+
+        std::string session_id = requested_session_id.empty()
+            ? get_string_or_empty(body, "session_id")
+            : requested_session_id;
+        if (session_id.empty()) {
+            session_id = g_remote_session_store.create_session_id();
+        }
+
+        std::optional<json> existing_session = g_remote_session_store.get_session(session_id);
+        if (append_mode && !existing_session.has_value()) {
+            res->error(format_error_response("Unknown session_id for append_turn", ERROR_TYPE_INVALID_REQUEST));
+            return res;
+        }
+
+        const std::string write_mode = append_mode ? "append" : "new";
+        const std::string turn_id = get_string_or_empty(body, "turn_id").empty()
+            ? g_remote_session_store.create_turn_id()
+            : get_string_or_empty(body, "turn_id");
+
+        const auto t_start_build_messages = std::chrono::steady_clock::now();
+        body["session_id"] = session_id;
+        body["turn_id"] = turn_id;
+        body["stream"] = false;
+        body["messages"] = build_messages_from_session(existing_session, body, append_mode);
+
+        if (!body.contains("response_format")) {
+            body["response_format"] = json{
+                {"type", "json_schema"},
+                {"json_schema", {
+                    {"name", "ventriloquy_reply"},
+                    {"schema", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"direct_answer", {{"type", "string"}}},
+                            {"evidence", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                            {"next_action", {{"type", "string"}}},
+                            {"confidence", {{"type", "string"}, {"enum", json::array({"confirmed", "likely", "unclear", "blocked"})}}}
+                        }},
+                        {"required", json::array({"direct_answer", "evidence", "next_action", "confidence"})},
+                        {"additionalProperties", false}
+                    }}
+                }}
+            };
+        }
+
+        if (!body.contains("max_tokens") && !body.contains("n_predict")) {
+            body["max_tokens"] = 512;
+        }
+        const auto build_messages_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t_start_build_messages).count();
+
+        const auto t_start_model_completion = std::chrono::steady_clock::now();
+        std::vector<raw_buffer> files;
+        json body_parsed = oaicompat_chat_params_parse(body, meta->chat_params, files);
+        auto model_res = handle_completions_impl(
+            req,
+            SERVER_TASK_TYPE_COMPLETION,
+            body_parsed,
+            files,
+            TASK_RESPONSE_TYPE_OAI_CHAT);
+
+        if (!model_res || model_res->status != 200) {
+            return model_res;
+        }
+        if (model_res->is_stream()) {
+            model_res->error(format_error_response("remote session turns do not support stream mode", ERROR_TYPE_INVALID_REQUEST));
+            return model_res;
+        }
+        const auto model_completion_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t_start_model_completion).count();
+
+        const auto t_start_normalize = std::chrono::steady_clock::now();
+        json response_json = json::parse(model_res->data);
+        json normalized = build_ventriloquy_result(response_json, session_id, turn_id, write_mode);
+        const auto normalize_result_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t_start_normalize).count();
+
+        const json structured = response_json.value("structured_conclusion", json::object());
+        const json message = response_json.value("choices", json::array()).empty()
+            ? json::object()
+            : response_json["choices"][0].value("message", json::object());
+        const std::string assistant_text = flatten_message_content(message.value("content", json()));
+        const json messages = body["messages"];
+        const std::string user_text = messages.empty()
+            ? ""
+            : flatten_message_content(messages.back().value("content", json()));
+
+        const std::string result_ref = get_string_or_empty(body, "result_ref").empty()
+            ? ("session:" + session_id + "/turn:" + turn_id)
+            : get_string_or_empty(body, "result_ref");
+        const std::string evidence_ref = get_string_or_empty(body, "evidence_ref").empty()
+            ? result_ref
+            : get_string_or_empty(body, "evidence_ref");
+
+        json metadata = {
+            {"turn_id", turn_id},
+            {"write_mode", write_mode},
+            {"codex_request_id", get_string_or_empty(body, "codex_request_id")},
+            {"agent_dispatch_id", get_string_or_empty(body, "agent_dispatch_id")},
+            {"task_id", get_string_or_empty(body, "task_id")},
+            {"task_group_id", get_string_or_empty(body, "task_group_id")},
+            {"source_type", get_string_or_empty(body, "source_type")},
+            {"source_label", get_string_or_empty(body, "source_label")},
+            {"source_detail", get_string_or_empty(body, "source_detail")},
+            {"handoff_from", get_string_or_empty(body, "handoff_from")},
+            {"handoff_to", get_string_or_empty(body, "handoff_to")},
+            {"takeover_relation", get_string_or_empty(body, "takeover_relation")},
+            {"authorization_default", get_string_or_empty(body, "authorization_default")},
+            {"auto_authorize", get_bool_or_default(body, "auto_authorize", false)},
+            {"speaker_mode", get_string_or_empty(body, "speaker_mode")},
+            {"reasoning_level", get_string_or_empty(body, "reasoning_level")},
+            {"primary_intent", get_string_or_empty(body, "primary_intent")},
+            {"prompt_purpose", get_string_or_empty(body, "prompt_purpose")},
+            {"response_mode", get_string_or_empty(body, "response_mode")},
+            {"context_refs", get_array_or_empty(body, "context_refs")},
+            {"config_source", get_string_or_empty(body, "config_source")},
+            {"model", get_string_or_empty(body, "model")},
+            {"system_message", get_string_or_empty(body, "systemMessage")},
+            {"disable_reasoning_parsing", get_bool_or_default(body, "disableReasoningParsing", false)},
+            {"exclude_reasoning_from_context", get_bool_or_default(body, "excludeReasoningFromContext", false)},
+            {"reasoning_strength_level", get_string_or_empty(body, "reasoningStrengthLevel")},
+            {"show_tool_call_in_progress", get_bool_or_default(body, "showToolCallInProgress", false)},
+            {"always_show_agentic_turns", get_bool_or_default(body, "alwaysShowAgenticTurns", false)},
+            {"py_interpreter_enabled", get_bool_or_default(body, "pyInterpreterEnabled", false)},
+            {"pdf_as_image", get_bool_or_default(body, "pdfAsImage", false)},
+            {"stream", get_bool_or_default(body, "stream", false)},
+            {"timings_per_token", get_bool_or_default(body, "timings_per_token", false)},
+            {"backend_sampling", get_bool_or_default(body, "backend_sampling", false)},
+            {"samplers", get_string_or_empty(body, "samplers")},
+            {"temperature", body.contains("temperature") ? body["temperature"] : json()},
+            {"max_tokens", body.contains("max_tokens") ? body["max_tokens"] : json()},
+            {"top_k", body.contains("top_k") ? body["top_k"] : json()},
+            {"top_p", body.contains("top_p") ? body["top_p"] : json()},
+            {"min_p", body.contains("min_p") ? body["min_p"] : json()},
+            {"repeat_penalty", body.contains("repeat_penalty") ? body["repeat_penalty"] : json()},
+            {"inherited_model_config", body.contains("inherited_model_config") ? body["inherited_model_config"] : json::object()},
+            {"user_text", user_text},
+            {"assistant_text", assistant_text},
+            {"summary", get_string_or_empty(structured, "summary").empty() ? normalized.value("direct_answer", "") : get_string_or_empty(structured, "summary")},
+            {"direct_answer", normalized.value("direct_answer", "")},
+            {"next_action", normalized.value("next_action", "")},
+            {"confidence", normalized.value("confidence", "unclear")},
+            {"result_ref", result_ref},
+            {"evidence_ref", evidence_ref},
+            {"timings", json{
+                {"build_messages_ms", build_messages_ms},
+                {"model_completion_ms", model_completion_ms},
+                {"normalize_result_ms", normalize_result_ms},
+                {"persist_session_ms", 0}
+            }}
+        };
+
+        const auto t_start_persist = std::chrono::steady_clock::now();
+        g_remote_session_store.upsert_turn(session_id, metadata, body, response_json);
+        const auto persist_session_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t_start_persist).count();
+        const auto remote_session_turn_total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t_start_total).count();
+
+        metadata["timings"]["persist_session_ms"] = persist_session_ms;
+
+        normalized["result_ref"] = result_ref;
+        normalized["evidence_ref"] = evidence_ref;
+        normalized["codex_request_id"] = get_string_or_empty(body, "codex_request_id");
+        normalized["agent_dispatch_id"] = get_string_or_empty(body, "agent_dispatch_id");
+        normalized["timings"] = json{
+            {"build_messages_ms", build_messages_ms},
+            {"model_completion_ms", model_completion_ms},
+            {"normalize_result_ms", normalize_result_ms},
+            {"persist_session_ms", persist_session_ms},
+            {"remote_session_turn_total_ms", remote_session_turn_total_ms}
+        };
+        res->ok(normalized);
+        return res;
+    } catch (const std::exception & e) {
+        res->error(format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST));
+        return res;
+    }
+}
+
 std::unique_ptr<server_res_generator> server_routes::create_response(bool bypass_sleep) {
     return std::make_unique<server_res_generator>(queue_tasks, queue_results, params.sleep_idle_seconds, bypass_sleep);
 }
@@ -3804,6 +4337,58 @@ void server_routes::init_routes() {
             body_parsed,
             files,
             TASK_RESPONSE_TYPE_OAI_CHAT);
+    };
+
+    this->post_remote_session_new_turn = [this](const server_http_req & req) {
+        auto res = create_response();
+        GGML_UNUSED(res);
+        json body = json::parse(req.body);
+        return handle_remote_session_turn(req, body, "", false);
+    };
+
+    this->post_remote_session_append_turn = [this](const server_http_req & req) {
+        auto res = create_response();
+        GGML_UNUSED(res);
+        json body = json::parse(req.body);
+        const std::string session_id = req.get_param("session_id", get_string_or_empty(body, "session_id"));
+        return handle_remote_session_turn(req, body, session_id, true);
+    };
+
+    this->get_remote_sessions = [this](const server_http_req & req) {
+        auto res = create_response(true);
+        int limit = 50;
+        try {
+            const std::string limit_str = req.get_param("limit");
+            if (!limit_str.empty()) {
+                limit = std::max(1, std::stoi(limit_str));
+            }
+        } catch (const std::exception &) {
+            limit = 50;
+        }
+
+        res->ok(json{
+            {"record_model", "remote_session_list_v1"},
+            {"items", g_remote_session_store.list_sessions(limit)}
+        });
+        return res;
+    };
+
+    this->get_remote_session = [this](const server_http_req & req) {
+        auto res = create_response(true);
+        const std::string session_id = req.get_param("session_id");
+        if (session_id.empty()) {
+            res->error(format_error_response("session_id is required", ERROR_TYPE_INVALID_REQUEST));
+            return res;
+        }
+
+        const auto session = g_remote_session_store.get_session(session_id);
+        if (!session.has_value()) {
+            res->error(format_error_response("session not found", ERROR_TYPE_NOT_FOUND));
+            return res;
+        }
+
+        res->ok(*session);
+        return res;
     };
 
     this->post_responses_oai = [this](const server_http_req & req) {

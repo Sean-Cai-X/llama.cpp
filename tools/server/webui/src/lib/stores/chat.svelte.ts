@@ -711,7 +711,8 @@ class ChatStore {
 					expressionKeys,
 					query: content,
 					sliceSummary: content.slice(0, 160),
-					summary: content.slice(0, 160)
+					summary: content.slice(0, 160),
+					userMessageId: userMessage.id
 				}
 			);
 		} catch (error) {
@@ -743,6 +744,7 @@ class ChatStore {
 		onError?: (error: Error) => void,
 		modelOverride?: string | null,
 		auditContext?: {
+			userMessageId?: string;
 			sessionId: string;
 			turnId: string;
 			taskState: string;
@@ -776,6 +778,8 @@ class ChatStore {
 		const convId = assistantMessage.convId;
 		const sessionId = auditContext?.sessionId || assistantMessage.sessionId || '';
 		const turnId = auditContext?.turnId || assistantMessage.turnId || '';
+		const userMessageId = auditContext?.userMessageId;
+		const isSharedRemoteConversation = convId.startsWith('remote:');
 
 		const applyAuditState = async (
 			messageId: string,
@@ -1132,6 +1136,84 @@ class ChatStore {
 				perChatOverrides
 			});
 			if (agenticResult.handled) return;
+		}
+
+		if (isSharedRemoteConversation && sessionId) {
+			try {
+				const response = await ChatService.appendRemoteSessionTurn(sessionId, {
+					task_id: conversationsStore.activeConversation?.lastTaskId,
+					source_type: conversationsStore.activeConversation?.currentSourceType || 'mixed',
+					source_label: conversationsStore.activeConversation?.currentSourceLabel || 'webui',
+					source_detail: 'llama.cpp-webui',
+					handoff_from: 'webui',
+					handoff_to: 'webui',
+					takeover_relation: 'manual_direct_remote',
+					task_group_id: conversationsStore.activeConversation?.currentTaskGroupId,
+					speaker_mode: 'manual_webui',
+					reasoning_level:
+						(config().reasoningStrengthLevel?.toString().toLowerCase() as
+							| 'low'
+							| 'medium'
+							| 'high'
+							| undefined) || 'medium',
+					prompt_purpose: auditContext?.primaryIntent || 'manual_followup',
+					context_refs: [],
+					response_mode: 'structured_short',
+					prompt: auditContext?.query || ''
+				});
+
+				const finalStructured: StructuredConclusion = {
+					task_state: auditContext?.taskState || 'verify',
+					reasoning_level:
+						(config().reasoningStrengthLevel?.toString().toLowerCase() as
+							| 'low'
+							| 'medium'
+							| 'high'
+							| undefined) || 'medium',
+					primary_intent: auditContext?.primaryIntent || 'manual_followup',
+					evidence_refs: response.evidence || [],
+					next_action: response.next_action,
+					session_id: response.session_id,
+					turn_id: response.turn_id,
+					summary: response.direct_answer
+				};
+
+				await DatabaseService.updateMessage(currentMessageId, {
+					content: response.direct_answer || '',
+					turnId: response.turn_id,
+					structuredConclusion: finalStructured
+				});
+				if (userMessageId) {
+					await DatabaseService.updateMessage(userMessageId, { turnId: response.turn_id });
+				}
+
+				const auditUpdates = await applyAuditState(
+					currentMessageId,
+					response.direct_answer || '',
+					undefined,
+					finalStructured
+				);
+				const idx = conversationsStore.findMessageIndex(currentMessageId);
+				conversationsStore.updateMessageAtIndex(idx, {
+					content: response.direct_answer || '',
+					turnId: response.turn_id,
+					structuredConclusion: finalStructured,
+					...auditUpdates
+				});
+				if (userMessageId) {
+					const userIdx = conversationsStore.findMessageIndex(userMessageId);
+					if (userIdx !== -1) {
+						conversationsStore.updateMessageAtIndex(userIdx, { turnId: response.turn_id });
+					}
+				}
+				await conversationsStore.updateCurrentNode(currentMessageId);
+				cleanupStreamingState();
+				if (onComplete) await onComplete(response.direct_answer || '');
+				return;
+			} catch (error) {
+				streamCallbacks.onError(error as Error);
+				return;
+			}
 		}
 
 		// Non-agentic path: direct streaming into the single assistant message

@@ -110,6 +110,10 @@ struct server_routes {
     server_http_context::handler_t post_completions;
     server_http_context::handler_t post_completions_oai;
     server_http_context::handler_t post_chat_completions;
+    server_http_context::handler_t post_remote_session_new_turn;
+    server_http_context::handler_t post_remote_session_append_turn;
+    server_http_context::handler_t get_remote_sessions;
+    server_http_context::handler_t get_remote_session;
     server_http_context::handler_t post_responses_oai;
     server_http_context::handler_t post_transcriptions_oai;
     server_http_context::handler_t post_anthropic_messages;
@@ -134,6 +138,11 @@ private:
     std::unique_ptr<server_res_generator> handle_slots_restore(const server_http_req & req, int id_slot);
     std::unique_ptr<server_res_generator> handle_slots_erase(const server_http_req &, int id_slot);
     std::unique_ptr<server_res_generator> handle_embeddings_impl(const server_http_req & req, task_response_type res_type);
+    std::unique_ptr<server_res_generator> handle_remote_session_turn(
+            const server_http_req & req,
+            const json & body,
+            const std::string & session_id,
+            bool append_mode);
 
     // using unique_ptr to allow late initialization of const
     std::unique_ptr<const server_context_meta> meta;

@@ -1,6 +1,8 @@
 import Dexie, { type EntityTable } from 'dexie';
 import { findDescendantMessages, uuid, filterByLeafNodeId } from '$lib/utils';
 import type { McpServerOverride } from '$lib/types/database';
+import type { ApiRemoteSession } from '$lib/types';
+import { MessageRole, MessageType } from '$lib/enums';
 
 class LlamacppDatabase extends Dexie {
 	conversations!: EntityTable<DatabaseConversation, string>;
@@ -22,7 +24,6 @@ class LlamacppDatabase extends Dexie {
 }
 
 const db = new LlamacppDatabase();
-import { MessageRole } from '$lib/enums';
 
 export class DatabaseService {
 	/**
@@ -384,6 +385,200 @@ export class DatabaseService {
 		updates: Partial<Omit<DatabaseMessage, 'id'>>
 	): Promise<void> {
 		await db.messages.update(id, updates);
+	}
+
+	static async mirrorRemoteSession(session: ApiRemoteSession): Promise<DatabaseConversation> {
+		return await db.transaction('rw', [db.conversations, db.messages], async () => {
+			const existingConversation = await db.conversations
+				.where('sessionId')
+				.equals(session.session_id)
+				.first();
+			const conversationId = existingConversation?.id || `remote:${session.session_id}`;
+			const rootId = `remote:${session.session_id}:root`;
+			const turns = session.turns || [];
+			const lastTurn = turns[turns.length - 1];
+			const lastAssistantTurn = [...turns].reverse().find((turn) => turn.assistant_text?.trim());
+
+			await db.messages.where('convId').equals(conversationId).delete();
+
+			const rootMessage: DatabaseMessage = {
+				id: rootId,
+				convId: conversationId,
+				sessionId: session.session_id,
+				type: 'root',
+				timestamp: session.created_at || session.updated_at || Date.now(),
+				role: MessageRole.SYSTEM,
+				content: '',
+				parent: null,
+				toolCalls: '',
+				children: []
+			};
+			await db.messages.put(rootMessage);
+
+			let previousMessageId = rootId;
+			const rootChildren: string[] = [];
+			let currNode = rootId;
+
+			for (const turn of turns) {
+				const userId = `remote:${session.session_id}:user:${turn.turn_id}`;
+				const assistantId = `remote:${session.session_id}:assistant:${turn.turn_id}`;
+				const taskId = turn.task_id || undefined;
+				const evidenceRefs = turn.evidence_ref ? [turn.evidence_ref] : [];
+
+				const userMessage: DatabaseMessage = {
+					id: userId,
+					convId: conversationId,
+					sessionId: session.session_id,
+					turnId: turn.turn_id,
+					taskId,
+					taskGroupId: turn.task_group_id || undefined,
+					intentKey: turn.prompt_purpose || undefined,
+					evidenceRefs,
+					sourceType: turn.source_type || undefined,
+					sourceLabel: turn.source_label || undefined,
+					sourceDetail: turn.source_detail || undefined,
+					handoffFrom: turn.handoff_from || undefined,
+					handoffTo: turn.handoff_to || undefined,
+					takeoverRelation: turn.takeover_relation || undefined,
+					type: MessageType.TEXT,
+					timestamp: turn.timestamp || Date.now(),
+					role: MessageRole.USER,
+					content: turn.user_text || turn.request_payload?.prompt?.toString?.() || '',
+					parent: previousMessageId,
+					toolCalls: '',
+					children: turn.assistant_text?.trim() ? [assistantId] : [],
+					dialogSlice: {
+						sessionId: session.session_id,
+						turnId: turn.turn_id,
+						userText: turn.user_text || '',
+						assistantText: turn.assistant_text || '',
+						summary: turn.summary || undefined,
+						expressionKeys: [],
+						evidenceRefs,
+						createdAt: turn.timestamp || Date.now()
+					},
+					executionBinding: {
+						sessionId: session.session_id,
+						turnId: turn.turn_id,
+						primaryIntent: turn.prompt_purpose || undefined,
+						taskId,
+						taskGroupId: turn.task_group_id || undefined,
+						sourceType: turn.source_type || undefined,
+						sourceLabel: turn.source_label || undefined,
+						sourceDetail: turn.source_detail || undefined,
+						handoffFrom: turn.handoff_from || undefined,
+						handoffTo: turn.handoff_to || undefined,
+						takeoverRelation: turn.takeover_relation || undefined,
+						evidenceRefs,
+						status: turn.confidence,
+						toolName: turn.prompt_purpose || undefined
+					}
+				};
+				await db.messages.put(userMessage);
+
+				if (previousMessageId === rootId) {
+					rootChildren.push(userId);
+				} else {
+					await db.messages.update(previousMessageId, { children: [userId] });
+				}
+
+				previousMessageId = userId;
+				currNode = userId;
+
+				if (turn.assistant_text?.trim()) {
+					const assistantMessage: DatabaseMessage = {
+						id: assistantId,
+						convId: conversationId,
+						sessionId: session.session_id,
+						turnId: turn.turn_id,
+						taskId,
+						taskGroupId: turn.task_group_id || undefined,
+						intentKey: turn.prompt_purpose || undefined,
+						evidenceRefs,
+						sourceType: turn.source_type || undefined,
+						sourceLabel: turn.source_label || undefined,
+						sourceDetail: turn.source_detail || undefined,
+						handoffFrom: turn.handoff_from || undefined,
+						handoffTo: turn.handoff_to || undefined,
+						takeoverRelation: turn.takeover_relation || undefined,
+						type: MessageType.TEXT,
+						timestamp: (turn.timestamp || Date.now()) + 1,
+						role: MessageRole.ASSISTANT,
+						content: turn.assistant_text,
+						parent: userId,
+						toolCalls: '',
+						children: [],
+						structuredConclusion: {
+							task_state: '',
+							reasoning_level: turn.reasoning_level || undefined,
+							primary_intent: turn.prompt_purpose || undefined,
+							evidence_refs: evidenceRefs,
+							next_action: turn.next_action || undefined,
+							session_id: session.session_id,
+							turn_id: turn.turn_id,
+							summary: turn.summary || turn.direct_answer || undefined
+						},
+						dialogSlice: {
+							sessionId: session.session_id,
+							turnId: turn.turn_id,
+							userText: turn.user_text || '',
+							assistantText: turn.assistant_text || '',
+							summary: turn.summary || undefined,
+							expressionKeys: [],
+							evidenceRefs,
+							createdAt: (turn.timestamp || Date.now()) + 1
+						},
+						executionBinding: {
+							sessionId: session.session_id,
+							turnId: turn.turn_id,
+							primaryIntent: turn.prompt_purpose || undefined,
+							taskId,
+							taskGroupId: turn.task_group_id || undefined,
+							sourceType: turn.source_type || undefined,
+							sourceLabel: turn.source_label || undefined,
+							sourceDetail: turn.source_detail || undefined,
+							handoffFrom: turn.handoff_from || undefined,
+							handoffTo: turn.handoff_to || undefined,
+							takeoverRelation: turn.takeover_relation || undefined,
+							evidenceRefs,
+							status: turn.confidence,
+							toolName: turn.prompt_purpose || undefined
+						}
+					};
+					await db.messages.put(assistantMessage);
+					currNode = assistantId;
+					previousMessageId = assistantId;
+				}
+			}
+
+			await db.messages.update(rootId, { children: rootChildren });
+
+			const conversation: DatabaseConversation = {
+				id: conversationId,
+				name: session.title || lastAssistantTurn?.summary || `Remote session ${session.session_id.slice(0, 8)}`,
+				lastModified: session.updated_at || Date.now(),
+				currNode,
+				sessionId: session.session_id,
+				lastTurnId: session.last_turn_id || lastTurn?.turn_id,
+				currentTaskState: lastTurn ? (lastTurn.write_mode === 'append' ? 'verify' : 'observe') : undefined,
+				currentReasoningLevel: lastTurn?.reasoning_level || undefined,
+				currentPrimaryIntent: lastTurn?.prompt_purpose || undefined,
+				currentSummary: lastTurn?.summary || lastTurn?.direct_answer || undefined,
+				lastTaskId: lastTurn?.task_id || undefined,
+				currentTaskGroupId: session.task_group_id || lastTurn?.task_group_id || undefined,
+				lastEvidenceRefs: lastTurn?.evidence_ref ? [lastTurn.evidence_ref] : [],
+				currentExpressionKeys: [],
+				currentSourceType: session.source_type || lastTurn?.source_type || undefined,
+				currentSourceLabel: lastTurn?.source_label || session.source_type || undefined,
+				currentSourceDetail: lastTurn?.source_detail || undefined,
+				currentHandoffFrom: session.handoff_from || lastTurn?.handoff_from || undefined,
+				currentHandoffTo: session.handoff_to || lastTurn?.handoff_to || undefined,
+				currentTakeoverRelation: session.takeover_relation || lastTurn?.takeover_relation || undefined
+			};
+
+			await db.conversations.put(conversation);
+			return conversation;
+		});
 	}
 
 	/**

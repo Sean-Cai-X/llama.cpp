@@ -22,6 +22,7 @@ import { goto } from '$app/navigation';
 import { browser } from '$app/environment';
 import { toast } from 'svelte-sonner';
 import { DatabaseService } from '$lib/services/database.service';
+import { RemoteSessionsService } from '$lib/services/remote-sessions.service';
 import { config } from '$lib/stores/settings.svelte';
 import {
 	filterByLeafNodeId,
@@ -230,8 +231,21 @@ class ConversationsStore {
 	 * Loads all conversations from the database
 	 */
 	async loadConversations(): Promise<void> {
+		await this.syncRemoteSessions();
 		const conversations = await DatabaseService.getAllConversations();
 		this.conversations = conversations;
+	}
+
+	async syncRemoteSessions(limit = 50): Promise<void> {
+		try {
+			const sessions = await RemoteSessionsService.list(limit);
+			for (const session of sessions) {
+				const fullSession = await RemoteSessionsService.get(session.session_id);
+				await DatabaseService.mirrorRemoteSession(fullSession);
+			}
+		} catch (error) {
+			console.warn('Failed to sync remote sessions:', error);
+		}
 	}
 
 	/**
@@ -297,7 +311,18 @@ class ConversationsStore {
 	 */
 	async loadConversation(convId: string): Promise<boolean> {
 		try {
-			const conversation = await DatabaseService.getConversation(convId);
+			let conversation = await DatabaseService.getConversation(convId);
+
+			if (!conversation && convId.startsWith('remote:')) {
+				const sessionId = convId.slice('remote:'.length);
+				try {
+					const remoteSession = await RemoteSessionsService.get(sessionId);
+					await DatabaseService.mirrorRemoteSession(remoteSession);
+					conversation = await DatabaseService.getConversation(convId);
+				} catch (error) {
+					console.warn('Failed to fetch remote conversation on demand:', error);
+				}
+			}
 
 			if (!conversation) {
 				return false;
