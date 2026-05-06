@@ -15,6 +15,26 @@
 #include "bundle.js.hpp"
 #include "bundle.css.hpp"
 #include "loading.html.hpp"
+#include "bundle.parts/manifest.json.hpp"
+#include "bundle.parts/bundle.part.000.js.hpp"
+#include "bundle.parts/bundle.part.001.js.hpp"
+#include "bundle.parts/bundle.part.002.js.hpp"
+#include "bundle.parts/bundle.part.003.js.hpp"
+#include "bundle.parts/bundle.part.004.js.hpp"
+#include "bundle.parts/bundle.part.005.js.hpp"
+#include "bundle.parts/bundle.part.006.js.hpp"
+#include "bundle.parts/bundle.part.007.js.hpp"
+#include "bundle.parts/bundle.part.008.js.hpp"
+#include "bundle.parts/bundle.part.009.js.hpp"
+#include "bundle.parts/bundle.part.010.js.hpp"
+#include "bundle.parts/bundle.part.011.js.hpp"
+#include "bundle.parts/bundle.part.012.js.hpp"
+#include "bundle.parts/bundle.part.013.js.hpp"
+
+static bool set_embedded_asset(httplib::Response & res, const unsigned char * data, size_t size, const char * content_type) {
+    res.set_content(reinterpret_cast<const char *>(data), size, content_type);
+    return false;
+}
 #endif
 
 //
@@ -157,7 +177,8 @@ bool server_http_context::init(const common_params & params) {
         }
 
         // If path is public or static file, skip validation
-        if (public_endpoints.find(req.path) != public_endpoints.end()) {
+        if (public_endpoints.find(req.path) != public_endpoints.end()
+            || req.path.rfind("/bundle.parts/", 0) == 0) {
             return true;
         }
 
@@ -283,20 +304,61 @@ bool server_http_context::init(const common_params & params) {
                 // COEP and COOP headers, required by pyodide (python interpreter)
                 res.set_header("Cross-Origin-Embedder-Policy", "require-corp");
                 res.set_header("Cross-Origin-Opener-Policy", "same-origin");
-                res.set_content(reinterpret_cast<const char*>(index_html), index_html_len, "text/html; charset=utf-8");
-                return false;
+                return set_embedded_asset(res, index_html, index_html_len, "text/html; charset=utf-8");
             });
             srv->Get(params.api_prefix + "/bundle.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
-                res.set_content(reinterpret_cast<const char*>(bundle_js), bundle_js_len, "application/javascript; charset=utf-8");
-                return false;
+                return set_embedded_asset(res, bundle_js, bundle_js_len, "application/javascript; charset=utf-8");
             });
             srv->Get(params.api_prefix + "/codex-mcp-runtime.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
-                res.set_content(reinterpret_cast<const char*>(codex_mcp_runtime_js), codex_mcp_runtime_js_len, "application/javascript; charset=utf-8");
-                return false;
+                return set_embedded_asset(res, codex_mcp_runtime_js, codex_mcp_runtime_js_len, "application/javascript; charset=utf-8");
             });
             srv->Get(params.api_prefix + "/bundle.css", [](const httplib::Request & /*req*/, httplib::Response & res) {
-                res.set_content(reinterpret_cast<const char*>(bundle_css), bundle_css_len, "text/css; charset=utf-8");
-                return false;
+                return set_embedded_asset(res, bundle_css, bundle_css_len, "text/css; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/manifest.json", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, manifest_json, manifest_json_len, "application/json; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.000.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_000_js, bundle_part_000_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.001.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_001_js, bundle_part_001_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.002.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_002_js, bundle_part_002_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.003.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_003_js, bundle_part_003_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.004.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_004_js, bundle_part_004_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.005.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_005_js, bundle_part_005_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.006.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_006_js, bundle_part_006_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.007.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_007_js, bundle_part_007_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.008.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_008_js, bundle_part_008_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.009.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_009_js, bundle_part_009_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.010.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_010_js, bundle_part_010_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.011.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_011_js, bundle_part_011_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.012.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_012_js, bundle_part_012_js_len, "application/javascript; charset=utf-8");
+            });
+            srv->Get(params.api_prefix + "/bundle.parts/bundle.part.013.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
+                return set_embedded_asset(res, bundle_part_013_js, bundle_part_013_js_len, "application/javascript; charset=utf-8");
             });
 #endif
         }

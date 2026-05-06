@@ -49,11 +49,28 @@ if (LLAMA_BUILD_WEBUI)
         bundle.js
         bundle.css
         loading.html
+        bundle.parts/manifest.json
+        bundle.parts/bundle.part.000.js
+        bundle.parts/bundle.part.001.js
+        bundle.parts/bundle.part.002.js
+        bundle.parts/bundle.part.003.js
+        bundle.parts/bundle.part.004.js
+        bundle.parts/bundle.part.005.js
+        bundle.parts/bundle.part.006.js
+        bundle.parts/bundle.part.007.js
+        bundle.parts/bundle.part.008.js
+        bundle.parts/bundle.part.009.js
+        bundle.parts/bundle.part.010.js
+        bundle.parts/bundle.part.011.js
+        bundle.parts/bundle.part.012.js
+        bundle.parts/bundle.part.013.js
     )
 
     foreach(asset ${PUBLIC_ASSETS})
         set(input "${CMAKE_CURRENT_SOURCE_DIR}/public/${asset}")
         set(output "${CMAKE_CURRENT_BINARY_DIR}/${asset}.hpp")
+        get_filename_component(output_dir "${output}" DIRECTORY)
+        file(MAKE_DIRECTORY "${output_dir}")
         list(APPEND TARGET_SRCS ${output})
         add_custom_command(
             DEPENDS "${input}"

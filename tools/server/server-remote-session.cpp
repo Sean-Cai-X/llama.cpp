@@ -3,10 +3,13 @@
 #include "common.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -24,6 +27,53 @@ static std::string get_string(const json & value, const std::string & key) {
         return value.at(key).get<std::string>();
     }
     return value.at(key).dump();
+}
+
+static std::string trim_copy(std::string text) {
+    const auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
+    text.erase(text.begin(), std::find_if(text.begin(), text.end(), not_space));
+    text.erase(std::find_if(text.rbegin(), text.rend(), not_space).base(), text.end());
+    return text;
+}
+
+static bool looks_dirty_text(const std::string & text) {
+    const std::string trimmed = trim_copy(text);
+    return trimmed.empty() || trimmed == "{" || trimmed == "}";
+}
+
+static std::string extract_preferred_answer_text(const std::string & assistant_text, const std::string & direct_answer) {
+    const std::string direct_trimmed = trim_copy(direct_answer);
+    if (!direct_trimmed.empty()) {
+        return direct_trimmed;
+    }
+    const std::string assistant_trimmed = trim_copy(assistant_text);
+    if (looks_dirty_text(assistant_trimmed)) {
+        return "";
+    }
+    if (!assistant_trimmed.empty() && assistant_trimmed.front() == '{') {
+        try {
+            const json parsed = json::parse(assistant_trimmed);
+            if (parsed.is_object() && parsed.contains("direct_answer") && parsed["direct_answer"].is_string()) {
+                return trim_copy(parsed["direct_answer"].get<std::string>());
+            }
+            if (parsed.is_object() && parsed.contains("summary") && parsed["summary"].is_string()) {
+                return trim_copy(parsed["summary"].get<std::string>());
+            }
+        } catch (...) {
+        }
+    }
+    return assistant_trimmed;
+}
+
+static std::string fnv1a64_hex(const std::string & text) {
+    std::uint64_t hash = 14695981039346656037ull;
+    for (unsigned char ch : text) {
+        hash ^= static_cast<std::uint64_t>(ch);
+        hash *= 1099511628211ull;
+    }
+    std::ostringstream out;
+    out << std::hex << std::nouppercase << hash;
+    return out.str();
 }
 
 static json get_array(const json & value, const std::string & key) {
@@ -52,7 +102,9 @@ static std::string random_string(size_t len = 8) {
 
 remote_session_store::remote_session_store() {
     root_dir = (fs::current_path() / "remote_sessions").string();
+    slices_dir = (fs::current_path() / "remote_session_slices").string();
     fs::create_directories(root_dir);
+    fs::create_directories(slices_dir);
 }
 
 std::string remote_session_store::create_session_id() const {
@@ -65,6 +117,14 @@ std::string remote_session_store::create_turn_id() const {
 
 std::string remote_session_store::session_path(const std::string & session_id) const {
     return (fs::path(root_dir) / (session_id + ".json")).string();
+}
+
+std::string remote_session_store::slice_path(const std::string & session_id, const std::string & turn_id) const {
+    return (fs::path(slices_dir) / session_id / (turn_id + ".json")).string();
+}
+
+std::string remote_session_store::canonical_index_path() const {
+    return (fs::path(slices_dir) / "canonical_index.json").string();
 }
 
 json remote_session_store::build_empty_session(const std::string & session_id) const {
@@ -114,6 +174,101 @@ void remote_session_store::save_session_unlocked(const std::string & session_id,
     const std::string path = session_path(session_id);
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out << session.dump(2);
+}
+
+json remote_session_store::load_canonical_index_unlocked() const {
+    const std::string path = canonical_index_path();
+    if (!fs::exists(path)) {
+        return json::object();
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in.good()) {
+        return json::object();
+    }
+    try {
+        const json parsed = json::parse(in);
+        return parsed.is_object() ? parsed : json::object();
+    } catch (...) {
+        return json::object();
+    }
+}
+
+void remote_session_store::save_canonical_index_unlocked(const json & index) const {
+    std::ofstream out(canonical_index_path(), std::ios::binary | std::ios::trunc);
+    out << index.dump(2);
+}
+
+json remote_session_store::build_slice_unlocked(const std::string & session_id, const json & turn) const {
+    const std::string turn_id = get_string(turn, "turn_id");
+    const std::string source_type = get_string(turn, "source_type");
+    const std::string user_text = trim_copy(get_string(turn, "user_text"));
+    const std::string assistant_text = get_string(turn, "assistant_text");
+    const std::string direct_answer = get_string(turn, "direct_answer");
+    const std::string preferred_assistant_text = extract_preferred_answer_text(assistant_text, direct_answer);
+    const std::string preferred_summary = !preferred_assistant_text.empty()
+        ? preferred_assistant_text
+        : trim_copy(get_string(turn, "summary"));
+    const std::string write_mode = get_string(turn, "write_mode");
+    const std::string strategy_family = get_string(turn, "prompt_purpose");
+    const bool dirty_slice = looks_dirty_text(user_text) || looks_dirty_text(preferred_summary);
+    const std::string error_signature =
+        get_string(turn, "confidence") == "unclear" ? preferred_summary : "";
+    const std::string solution_summary =
+        (get_string(turn, "confidence") == "confirmed" || get_string(turn, "confidence") == "likely")
+            ? preferred_summary
+            : get_string(turn, "next_action");
+    const std::string dedup_source =
+        user_text + "\n" + preferred_summary + "\n" + strategy_family + "\n" + source_type + "\n" + write_mode;
+    const std::string dedup_key = "dedup:" + fnv1a64_hex(dedup_source);
+    const std::string slice_type = source_type == "webui" ? "manual_webui" : "remote_session";
+    const std::string slice_id = "slice:" + session_id + ":" + turn_id;
+
+    return json{
+        {"record_model", "rag_memory_slice_v1"},
+        {"slice_id", slice_id},
+        {"slice_type", slice_type},
+        {"created_at", turn.value("timestamp", now_ms())},
+        {"provider_id", "llama_cpp_b8851_remote_session"},
+        {"capability_id", "remote_session_turn"},
+        {"source_provider", "llama.cpp-b8851"},
+        {"task_id", get_string(turn, "task_id")},
+        {"session_id", session_id},
+        {"turn_id", turn_id},
+        {"task_group_id", get_string(turn, "task_group_id")},
+        {"strategy_key", get_string(turn, "prompt_purpose")},
+        {"strategy_family", strategy_family},
+        {"user_text", user_text},
+        {"assistant_text", preferred_assistant_text},
+        {"slice_summary", preferred_summary},
+        {"error_signature", error_signature},
+        {"solution_summary", solution_summary},
+        {"expression_keys", json::array()},
+        {"reasoning_level", get_string(turn, "reasoning_level")},
+        {"primary_intent", ""},
+        {"secondary_intents", json::array()},
+        {"confidence", get_string(turn, "confidence")},
+        {"similarity_score", 0.0},
+        {"result_ref", get_string(turn, "result_ref")},
+        {"evidence_ref", get_string(turn, "evidence_ref")},
+        {"slice_refs", json::array()},
+        {"storage_refs", json::array({"remote_session_store:" + session_id, "remote_session_slice:" + slice_id})},
+        {"source_type", source_type},
+        {"write_mode", write_mode},
+        {"vector_payload", dirty_slice ? "" : (user_text + "\n" + preferred_summary)},
+        {"vector_ready", !dirty_slice},
+        {"vector_skip_reason", dirty_slice ? "dirty_content_only_brace" : ""},
+        {"canonical_slice_id", ""},
+        {"canonical_status", "pending"},
+        {"metadata_json", turn},
+        {"dedup_hash", dedup_key}
+    };
+}
+
+void remote_session_store::save_slice_unlocked(const std::string & session_id, const std::string & turn_id, const json & slice) const {
+    const fs::path path = slice_path(session_id, turn_id);
+    fs::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << slice.dump(2);
 }
 
 std::optional<json> remote_session_store::get_session(const std::string & session_id) const {
@@ -241,6 +396,43 @@ json remote_session_store::upsert_turn(
         {"response_payload", response_payload}
     };
 
+    json slice = build_slice_unlocked(session_id, turn);
+    const std::string slice_id = get_string(slice, "slice_id");
+    const std::string dedup_key = get_string(slice, "dedup_hash");
+    const std::string persisted_slice_path = slice_path(session_id, turn_id);
+    json canonical_index = load_canonical_index_unlocked();
+    std::string canonical_slice_id = get_string(canonical_index, dedup_key);
+    const bool canonical_exists = !canonical_slice_id.empty();
+    if (!canonical_exists) {
+        canonical_slice_id = slice_id;
+        canonical_index[dedup_key] = canonical_slice_id;
+        save_canonical_index_unlocked(canonical_index);
+    }
+    slice["canonical_slice_id"] = canonical_slice_id;
+    slice["canonical_status"] = canonical_exists ? "duplicate" : "canonical";
+    if (canonical_exists) {
+        slice["vector_ready"] = false;
+        if (get_string(slice, "vector_skip_reason").empty()) {
+            slice["vector_skip_reason"] = "duplicate_of_canonical";
+        }
+    }
+    turn["slice_id"] = slice_id;
+    turn["slice_refs"] = json::array({slice_id});
+    turn["storage_refs"] = json::array({"remote_session_store:" + session_id, "remote_session_slice:" + slice_id});
+    turn["slice_path"] = persisted_slice_path;
+    turn["dedup_key"] = dedup_key;
+    turn["dedup_hash"] = dedup_key;
+    turn["canonical_slice_id"] = canonical_slice_id;
+    turn["canonical_status"] = get_string(slice, "canonical_status");
+    turn["provider_id"] = get_string(slice, "provider_id");
+    turn["capability_id"] = get_string(slice, "capability_id");
+    turn["error_signature"] = get_string(slice, "error_signature");
+    turn["solution_summary"] = get_string(slice, "solution_summary");
+    turn["strategy_family"] = get_string(slice, "strategy_family");
+    turn["similarity_score"] = slice.contains("similarity_score") ? slice["similarity_score"] : 0.0;
+    turn["vector_ready"] = slice.value("vector_ready", false);
+    turn["vector_skip_reason"] = get_string(slice, "vector_skip_reason");
+
     session["updated_at"] = ts;
     session["last_turn_id"] = turn_id;
     if (!source_type.empty()) session["source_type"] = source_type;
@@ -259,5 +451,6 @@ json remote_session_store::upsert_turn(
     }
 
     save_session_unlocked(session_id, session);
+    save_slice_unlocked(session_id, turn_id, slice);
     return turn;
 }

@@ -96,23 +96,6 @@ static json build_messages_from_session(
         bool append_mode) {
     json messages = json::array();
 
-    if (body.contains("messages") && body.at("messages").is_array()) {
-        return body.at("messages");
-    }
-
-    if (append_mode && existing_session.has_value()) {
-        for (const auto & turn : existing_session->value("turns", json::array())) {
-            const std::string user_text = get_string_or_empty(turn, "user_text");
-            const std::string assistant_text = get_string_or_empty(turn, "assistant_text");
-            if (!user_text.empty()) {
-                messages.push_back({{"role", "user"}, {"content", user_text}});
-            }
-            if (!assistant_text.empty()) {
-                messages.push_back({{"role", "assistant"}, {"content", assistant_text}});
-            }
-        }
-    }
-
     const std::string approval_mode = get_string_or_empty(body, "authorization_default");
     const bool auto_authorize = get_bool_or_default(body, "auto_authorize", false);
     std::string system_prompt =
@@ -129,29 +112,63 @@ static json build_messages_from_session(
     }
     messages.push_back({{"role", "system"}, {"content", system_prompt}});
 
-    const std::string prompt_text =
-        get_string_or_empty(body, "prompt")
-        .empty() ? get_string_or_empty(body, "user_text") : get_string_or_empty(body, "prompt");
-    const std::string query_text =
-        prompt_text.empty() ? get_string_or_empty(body, "query") : prompt_text;
+    if (body.contains("messages") && body.at("messages").is_array() && !body.at("messages").empty()) {
+        for (const auto & message : body.at("messages")) {
+            messages.push_back(message);
+        }
+        return messages;
+    }
+
     const std::string prompt_purpose = get_string_or_empty(body, "prompt_purpose");
     const std::string primary_intent = get_string_or_empty(body, "primary_intent");
     const std::string reasoning_level = get_string_or_empty(body, "reasoning_level");
+    const std::string task_id = get_string_or_empty(body, "task_id");
+    const std::string task_group_id = get_string_or_empty(body, "task_group_id");
     const json context_refs = get_array_or_empty(body, "context_refs");
-    std::string user_content;
+    std::string metadata_content;
     if (!reasoning_level.empty()) {
-        user_content += "reasoning_level=" + reasoning_level + "\n";
+        metadata_content += "- reasoning_level: " + reasoning_level + "\n";
     }
     if (!prompt_purpose.empty()) {
-        user_content += "prompt_purpose=" + prompt_purpose + "\n";
+        metadata_content += "- prompt_purpose: " + prompt_purpose + "\n";
     }
     if (!primary_intent.empty()) {
-        user_content += "primary_intent=" + primary_intent + "\n";
+        metadata_content += "- primary_intent: " + primary_intent + "\n";
+    }
+    if (!task_id.empty()) {
+        metadata_content += "- task_id: " + task_id + "\n";
+    }
+    if (!task_group_id.empty()) {
+        metadata_content += "- task_group_id: " + task_group_id + "\n";
     }
     if (!context_refs.empty()) {
-        user_content += "context_refs:\n" + build_text_from_refs(context_refs);
+        metadata_content += "- context_refs:\n" + build_text_from_refs(context_refs);
     }
-    user_content += query_text;
+    if (!metadata_content.empty()) {
+        messages.push_back({{"role", "system"}, {"content", std::string("Session metadata:\n") + metadata_content}});
+    }
+
+    if (append_mode && existing_session.has_value()) {
+        for (const auto & turn : existing_session->value("turns", json::array())) {
+            const std::string user_text = get_string_or_empty(turn, "user_text");
+            const std::string assistant_text = get_string_or_empty(turn, "assistant_text");
+            if (!user_text.empty()) {
+                messages.push_back({{"role", "user"}, {"content", user_text}});
+            }
+            if (!assistant_text.empty()) {
+                messages.push_back({{"role", "assistant"}, {"content", assistant_text}});
+            }
+        }
+    }
+    const std::string user_content = !get_string_or_empty(body, "prompt_text").empty()
+        ? get_string_or_empty(body, "prompt_text")
+        : !get_string_or_empty(body, "prompt").empty()
+            ? get_string_or_empty(body, "prompt")
+            : !get_string_or_empty(body, "question").empty()
+                ? get_string_or_empty(body, "question")
+                : !get_string_or_empty(body, "user_text").empty()
+                    ? get_string_or_empty(body, "user_text")
+                    : get_string_or_empty(body, "query");
 
     if (messages.empty() || !user_content.empty()) {
         messages.push_back({{"role", "user"}, {"content", user_content}});
@@ -263,6 +280,24 @@ static std::string normalize_direct_answer_candidate(const std::string & text) {
         return value;
     };
 
+    auto is_metadata_echo = [&](const std::string & value) -> bool {
+        const std::string lower = lower_ascii(value);
+        return lower.rfind("reasoning_level=", 0) == 0 ||
+            lower.rfind("prompt_purpose=", 0) == 0 ||
+            lower.rfind("primary_intent=", 0) == 0 ||
+            lower.rfind("task_id=", 0) == 0 ||
+            lower.rfind("task_group_id=", 0) == 0 ||
+            lower.rfind("context_refs:", 0) == 0 ||
+            lower.rfind("session metadata:", 0) == 0 ||
+            lower.rfind("- reasoning_level:", 0) == 0 ||
+            lower.rfind("- prompt_purpose:", 0) == 0 ||
+            lower.rfind("- primary_intent:", 0) == 0 ||
+            lower.rfind("- task_id:", 0) == 0 ||
+            lower.rfind("- task_group_id:", 0) == 0 ||
+            lower.rfind("- context_refs:", 0) == 0 ||
+            lower.find("authorization default") != std::string::npos;
+    };
+
     std::istringstream iss(text);
     std::string line;
     while (std::getline(iss, line)) {
@@ -280,6 +315,10 @@ static std::string normalize_direct_answer_candidate(const std::string & text) {
             candidate == "思考过程" ||
             candidate == "推理过程：" ||
             candidate == "推理过程") {
+            continue;
+        }
+
+        if (is_metadata_echo(candidate)) {
             continue;
         }
 
@@ -331,12 +370,6 @@ static json build_ventriloquy_result(
         direct_answer = evidence[0].get<std::string>();
     }
 
-    if (direct_answer.empty()) {
-        direct_answer = content;
-    }
-    if (direct_answer.empty()) {
-        direct_answer = choice_text;
-    }
     if (direct_answer.empty()) {
         direct_answer = insufficient_context
             ? "Insufficient context to confirm; provide relevant status, logs, or tool results."
@@ -3895,7 +3928,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
         };
 
         const auto t_start_persist = std::chrono::steady_clock::now();
-        g_remote_session_store.upsert_turn(session_id, metadata, body, response_json);
+        const json persisted_turn = g_remote_session_store.upsert_turn(session_id, metadata, body, response_json);
         const auto persist_session_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - t_start_persist).count();
         const auto remote_session_turn_total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -3907,6 +3940,28 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
         normalized["evidence_ref"] = evidence_ref;
         normalized["codex_request_id"] = get_string_or_empty(body, "codex_request_id");
         normalized["agent_dispatch_id"] = get_string_or_empty(body, "agent_dispatch_id");
+        normalized["provider_id"] = get_string_or_empty(persisted_turn, "provider_id");
+        normalized["capability_id"] = get_string_or_empty(persisted_turn, "capability_id");
+        normalized["slice_id"] = get_string_or_empty(persisted_turn, "slice_id");
+        normalized["slice_path"] = get_string_or_empty(persisted_turn, "slice_path");
+        normalized["dedup_key"] = get_string_or_empty(persisted_turn, "dedup_key");
+        normalized["dedup_hash"] = get_string_or_empty(persisted_turn, "dedup_hash");
+        normalized["canonical_slice_id"] = get_string_or_empty(persisted_turn, "canonical_slice_id");
+        normalized["canonical_status"] = get_string_or_empty(persisted_turn, "canonical_status");
+        normalized["error_signature"] = get_string_or_empty(persisted_turn, "error_signature");
+        normalized["solution_summary"] = get_string_or_empty(persisted_turn, "solution_summary");
+        normalized["strategy_family"] = get_string_or_empty(persisted_turn, "strategy_family");
+        normalized["similarity_score"] = persisted_turn.contains("similarity_score")
+            ? persisted_turn["similarity_score"]
+            : 0.0;
+        normalized["vector_ready"] = persisted_turn.value("vector_ready", false);
+        normalized["vector_skip_reason"] = get_string_or_empty(persisted_turn, "vector_skip_reason");
+        normalized["slice_refs"] = persisted_turn.contains("slice_refs")
+            ? persisted_turn["slice_refs"]
+            : json::array();
+        normalized["storage_refs"] = persisted_turn.contains("storage_refs")
+            ? persisted_turn["storage_refs"]
+            : json::array();
         normalized["timings"] = json{
             {"build_messages_ms", build_messages_ms},
             {"model_completion_ms", model_completion_ms},
