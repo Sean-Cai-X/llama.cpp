@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 // fix problem with std::min and std::max
 #if defined(_WIN32)
@@ -90,6 +91,53 @@ static std::string build_text_from_refs(const json & refs) {
     return oss.str();
 }
 
+static json default_tool_availability_snapshot() {
+    return json{
+        {"snapshot_source", "llama_cpp_b8851_remote_session"},
+        {"tool_first_required", true},
+        {"path_permission_verification", "requires_raw_tool_error"},
+        {"multi_file_read_batch_size", "3-5"},
+        {"async_final_reply_requires_task_id", true},
+        {"available_tool_classes", json::array({
+            "remote_session_turn",
+            "remote_session_read",
+            "tool_error_passthrough",
+            "async_task_id_passthrough"
+        })}
+    };
+}
+
+static std::string build_compressed_task_state(const json & turns, std::size_t retained_turn_count) {
+    if (!turns.is_array() || turns.size() <= retained_turn_count) {
+        return "";
+    }
+
+    const std::size_t compressed_count = turns.size() - retained_turn_count;
+    const std::size_t preview_start = compressed_count > 6 ? compressed_count - 6 : 0;
+    std::ostringstream oss;
+    oss
+        << "Compressed task state from " << compressed_count
+        << " older turns. Old safety/noise text is intentionally not replayed.\n";
+    for (std::size_t i = preview_start; i < compressed_count; ++i) {
+        const json & turn = turns.at(i);
+        const std::string turn_id = get_string_or_empty(turn, "turn_id");
+        std::string summary = get_string_or_empty(turn, "summary");
+        if (summary.empty()) {
+            summary = get_string_or_empty(turn, "direct_answer");
+        }
+        if (summary.empty()) {
+            summary = get_string_or_empty(turn, "next_action");
+        }
+        if (summary.size() > 240) {
+            summary = summary.substr(0, 240);
+        }
+        if (!turn_id.empty() || !summary.empty()) {
+            oss << "- " << (turn_id.empty() ? "turn" : turn_id) << ": " << summary << "\n";
+        }
+    }
+    return oss.str();
+}
+
 static json build_messages_from_session(
         const std::optional<json> & existing_session,
         const json & body,
@@ -104,6 +152,10 @@ static json build_messages_from_session(
         "Do not output chain-of-thought, hidden reasoning, or 'Thinking Process'. "
         "Reply in the user's language when possible. "
         "If context is insufficient, still return a concise direct_answer that explicitly states what is missing. "
+        "Tool-first rule: verify path permissions and tool availability with explicit tool results before making permission, access, or unavailable-tool claims. "
+        "If no raw tool error exists, do not conclude a system permission restriction; state that verification evidence is missing. "
+        "Read multiple files in batches of 3-5 files per round, then explicitly continue the next batch. "
+        "Never use 'please wait' or '请稍后' as a final answer unless an async task_id was actually created. "
         "When a JSON schema is requested, output only the final schema-compatible JSON object.";
     if (!approval_mode.empty() || body.contains("auto_authorize")) {
         system_prompt += auto_authorize
@@ -111,13 +163,6 @@ static json build_messages_from_session(
             : " Authorization default is prompt; do not assume hidden approvals or unavailable tool results.";
     }
     messages.push_back({{"role", "system"}, {"content", system_prompt}});
-
-    if (body.contains("messages") && body.at("messages").is_array() && !body.at("messages").empty()) {
-        for (const auto & message : body.at("messages")) {
-            messages.push_back(message);
-        }
-        return messages;
-    }
 
     const std::string prompt_purpose = get_string_or_empty(body, "prompt_purpose");
     const std::string primary_intent = get_string_or_empty(body, "primary_intent");
@@ -141,6 +186,26 @@ static json build_messages_from_session(
     if (!task_group_id.empty()) {
         metadata_content += "- task_group_id: " + task_group_id + "\n";
     }
+    const json tool_availability_snapshot = body.contains("tool_availability_snapshot")
+        && !body.at("tool_availability_snapshot").is_null()
+            ? body.at("tool_availability_snapshot")
+            : default_tool_availability_snapshot();
+    metadata_content += "- tool_availability_snapshot: " + tool_availability_snapshot.dump() + "\n";
+    const std::vector<std::string> policy_keys = {
+        "tool_first_policy",
+        "multi_file_read_policy",
+        "long_session_policy",
+        "permission_policy",
+        "async_reply_policy",
+        "raw_tool_error",
+        "async_task_id"
+    };
+    for (const std::string & policy_key : policy_keys) {
+        const std::string policy_value = get_string_or_empty(body, policy_key);
+        if (!policy_value.empty()) {
+            metadata_content += "- " + policy_key + ": " + policy_value + "\n";
+        }
+    }
     if (!context_refs.empty()) {
         metadata_content += "- context_refs:\n" + build_text_from_refs(context_refs);
     }
@@ -148,8 +213,25 @@ static json build_messages_from_session(
         messages.push_back({{"role", "system"}, {"content", std::string("Session metadata:\n") + metadata_content}});
     }
 
+    if (body.contains("messages") && body.at("messages").is_array() && !body.at("messages").empty()) {
+        for (const auto & message : body.at("messages")) {
+            messages.push_back(message);
+        }
+        return messages;
+    }
+
     if (append_mode && existing_session.has_value()) {
-        for (const auto & turn : existing_session->value("turns", json::array())) {
+        const json turns = existing_session->value("turns", json::array());
+        const std::size_t retained_turn_count = 8;
+        const std::string compressed_state = build_compressed_task_state(turns, retained_turn_count);
+        if (!compressed_state.empty()) {
+            messages.push_back({{"role", "system"}, {"content", std::string("Compressed prior task state:\n") + compressed_state}});
+        }
+        const std::size_t start_index = turns.is_array() && turns.size() > retained_turn_count
+            ? turns.size() - retained_turn_count
+            : 0;
+        for (std::size_t i = start_index; turns.is_array() && i < turns.size(); ++i) {
+            const auto & turn = turns.at(i);
             const std::string user_text = get_string_or_empty(turn, "user_text");
             const std::string assistant_text = get_string_or_empty(turn, "assistant_text");
             if (!user_text.empty()) {
@@ -3868,6 +3950,10 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
         const std::string evidence_ref = get_string_or_empty(body, "evidence_ref").empty()
             ? result_ref
             : get_string_or_empty(body, "evidence_ref");
+        const json tool_availability_snapshot = body.contains("tool_availability_snapshot")
+            && !body.at("tool_availability_snapshot").is_null()
+                ? body.at("tool_availability_snapshot")
+                : default_tool_availability_snapshot();
 
         json metadata = {
             {"turn_id", turn_id},
@@ -3890,6 +3976,14 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
             {"prompt_purpose", get_string_or_empty(body, "prompt_purpose")},
             {"response_mode", get_string_or_empty(body, "response_mode")},
             {"context_refs", get_array_or_empty(body, "context_refs")},
+            {"tool_availability_snapshot", tool_availability_snapshot},
+            {"tool_first_policy", get_string_or_empty(body, "tool_first_policy")},
+            {"multi_file_read_policy", get_string_or_empty(body, "multi_file_read_policy")},
+            {"long_session_policy", get_string_or_empty(body, "long_session_policy")},
+            {"permission_policy", get_string_or_empty(body, "permission_policy")},
+            {"async_reply_policy", get_string_or_empty(body, "async_reply_policy")},
+            {"raw_tool_error", get_string_or_empty(body, "raw_tool_error")},
+            {"async_task_id", get_string_or_empty(body, "async_task_id")},
             {"config_source", get_string_or_empty(body, "config_source")},
             {"model", get_string_or_empty(body, "model")},
             {"system_message", get_string_or_empty(body, "systemMessage")},
@@ -3940,6 +4034,14 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
         normalized["evidence_ref"] = evidence_ref;
         normalized["codex_request_id"] = get_string_or_empty(body, "codex_request_id");
         normalized["agent_dispatch_id"] = get_string_or_empty(body, "agent_dispatch_id");
+        normalized["tool_availability_snapshot"] = tool_availability_snapshot;
+        normalized["tool_first_policy"] = get_string_or_empty(body, "tool_first_policy");
+        normalized["multi_file_read_policy"] = get_string_or_empty(body, "multi_file_read_policy");
+        normalized["long_session_policy"] = get_string_or_empty(body, "long_session_policy");
+        normalized["permission_policy"] = get_string_or_empty(body, "permission_policy");
+        normalized["async_reply_policy"] = get_string_or_empty(body, "async_reply_policy");
+        normalized["raw_tool_error"] = get_string_or_empty(body, "raw_tool_error");
+        normalized["async_task_id"] = get_string_or_empty(body, "async_task_id");
         normalized["provider_id"] = get_string_or_empty(persisted_turn, "provider_id");
         normalized["capability_id"] = get_string_or_empty(persisted_turn, "capability_id");
         normalized["slice_id"] = get_string_or_empty(persisted_turn, "slice_id");
