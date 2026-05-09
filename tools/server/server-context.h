@@ -125,6 +125,15 @@ struct server_routes {
     server_http_context::handler_t post_embeddings;
     server_http_context::handler_t post_embeddings_oai;
     server_http_context::handler_t post_rerank;
+    server_http_context::handler_t post_rag_index;
+    server_http_context::handler_t get_rag_index_status;
+    server_http_context::handler_t post_rag_add;
+    server_http_context::handler_t post_rag_search;
+    server_http_context::handler_t post_rag_explain;
+    server_http_context::handler_t post_rag_chat_context;
+    server_http_context::handler_t post_rag_clips_meta;
+    server_http_context::handler_t get_rag_clips_manifest;
+    server_http_context::handler_t post_rag_clips_run;
     server_http_context::handler_t get_lora_adapters;
     server_http_context::handler_t post_lora_adapters;
 private:

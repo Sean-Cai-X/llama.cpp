@@ -111,6 +111,14 @@ int main(int argc, char ** argv) {
 
     LOG_INF("build_info: %s\n", llama_build_info());
     LOG_INF("%s\n", common_params_get_system_info(params).c_str());
+#if defined(LLAMA_SERVER_RAG_MODULE)
+    LOG_INF("%s: isolated RAG module is linked from tools/server/RAG\n", __func__);
+#if defined(LLAMA_SERVER_RAG_CXPARSER_BRIDGE)
+    LOG_INF("%s: RAG cxparser bridge is enabled in this build\n", __func__);
+#else
+    LOG_INF("%s: RAG cxparser bridge is disabled in this build\n", __func__);
+#endif
+#endif
 
     server_http_context ctx_http;
     if (!ctx_http.init(params)) {
@@ -153,6 +161,12 @@ int main(int argc, char ** argv) {
         routes.post_embeddings             = models_routes->proxy_post;
         routes.post_embeddings_oai         = models_routes->proxy_post;
         routes.post_rerank                 = models_routes->proxy_post;
+        routes.post_rag_index              = models_routes->proxy_post;
+        routes.get_rag_index_status        = models_routes->proxy_get;
+        routes.post_rag_add                = models_routes->proxy_post;
+        routes.post_rag_search             = models_routes->proxy_post;
+        routes.post_rag_explain            = models_routes->proxy_post;
+        routes.post_rag_chat_context       = models_routes->proxy_post;
         routes.post_tokenize               = models_routes->proxy_post;
         routes.post_detokenize             = models_routes->proxy_post;
         routes.post_apply_template         = models_routes->proxy_post;
@@ -202,6 +216,16 @@ int main(int argc, char ** argv) {
     ctx_http.post("/reranking",                ex_wrapper(routes.post_rerank));
     ctx_http.post("/v1/rerank",                ex_wrapper(routes.post_rerank));
     ctx_http.post("/v1/reranking",             ex_wrapper(routes.post_rerank));
+    ctx_http.post("/rag/index",                ex_wrapper(routes.post_rag_index));
+    ctx_http.get ("/rag/index/status",         ex_wrapper(routes.get_rag_index_status));
+    ctx_http.post("/rag/add",                  ex_wrapper(routes.post_rag_add));
+    ctx_http.post("/rag/search",               ex_wrapper(routes.post_rag_search));
+    ctx_http.post("/rag/explain",              ex_wrapper(routes.post_rag_explain));
+    ctx_http.post("/rag/chat/context",         ex_wrapper(routes.post_rag_chat_context));
+    ctx_http.post("/v1/rag/chat/context",      ex_wrapper(routes.post_rag_chat_context));
+    ctx_http.post("/rag/clips/meta",           ex_wrapper(routes.post_rag_clips_meta));
+    ctx_http.get ("/rag/clips/manifest",       ex_wrapper(routes.get_rag_clips_manifest));
+    ctx_http.post("/rag/clips/run",            ex_wrapper(routes.post_rag_clips_run));
     ctx_http.post("/tokenize",                 ex_wrapper(routes.post_tokenize));
     ctx_http.post("/detokenize",               ex_wrapper(routes.post_detokenize));
     ctx_http.post("/apply-template",           ex_wrapper(routes.post_apply_template));

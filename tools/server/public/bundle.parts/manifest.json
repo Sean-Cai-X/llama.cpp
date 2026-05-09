@@ -1,0 +1,24 @@
+{
+    "record_model":  "bundle_parts_v1",
+    "source":  "bundle.original.js",
+    "part_count":  14,
+    "parts":  [
+                  "bundle.part.000.js",
+                  "bundle.part.001.js",
+                  "bundle.part.002.js",
+                  "bundle.part.003.js",
+                  "bundle.part.004.js",
+                  "bundle.part.005.js",
+                  "bundle.part.006.js",
+                  "bundle.part.007.js",
+                  "bundle.part.008.js",
+                  "bundle.part.009.js",
+                  "bundle.part.010.js",
+                  "bundle.part.011.js",
+                  "bundle.part.012.js",
+                  "bundle.part.013.js"
+              ],
+    "target_part_size_bytes":  480000,
+    "max_part_size_bytes":  500000,
+    "largest_part_size_bytes":  499983
+}

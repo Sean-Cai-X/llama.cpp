@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "mcp_contract": {
+    "owner_thread": "RAG-main-thread",
+    "consumer_thread": "RAG-integration-thread",
+    "read_only_for_mcp": true,
+    "meta_endpoint": "/rag/clips/meta",
+    "manifest_endpoint": "/rag/clips/manifest",
+    "run_endpoint": "/rag/clips/run"
+  },
+  "rule_sets": [
+    {
+      "id": "rag-meta-core",
+      "description": "Core CLIPS templates and graph derivation rules for RAG meta slices",
+      "mcp_visible": true,
+      "rule_files": [
+        "meta_templates.clp",
+        "meta_graph_rules.clp"
+      ]
+    }
+  ]
+}

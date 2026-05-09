@@ -116,14 +116,28 @@ bool server_http_context::init(const common_params & params) {
         LOG_ERR("got exception: %s\n", message.c_str());
     });
 
-    srv->set_error_handler([](const httplib::Request &, httplib::Response & res) {
+    srv->set_error_handler([](const httplib::Request & req, httplib::Response & res) {
         if (res.status == 404) {
+            const json raw_error = {
+                {"error", {
+                    {"message", "File Not Found"},
+                    {"type", "not_found_error"},
+                    {"code", 404}
+                }}
+            };
             res.set_content(
                 safe_json_to_str(json {
                     {"error", {
-                        {"message", "File Not Found"},
-                        {"type", "not_found_error"},
-                        {"code", 404}
+                        {"message", "Endpoint is not registered or not mounted"},
+                        {"type", "endpoint_missing"},
+                        {"code", 404},
+                        {"classification", "capability_not_registered_or_not_mounted"},
+                        {"conclusion", "endpoint_missing"},
+                        {"method", req.method},
+                        {"path", req.path},
+                        {"original_error_type", "not_found_error"},
+                        {"raw_error_body", safe_json_to_str(raw_error)},
+                        {"next_action", "register or mount the endpoint before retrying; do not classify this as provider runtime failure"}
                     }}
                 }),
                 "application/json; charset=utf-8"

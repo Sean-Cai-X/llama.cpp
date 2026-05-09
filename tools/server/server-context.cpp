@@ -14,6 +14,8 @@
 #include "speculative.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
+#include "RAG/src/rag_integration_bridge.h"
+#include "RAG/src/rag_server_runtime.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -41,6 +43,20 @@ constexpr int HTTP_POLLING_SECONDS = 1;
 
 namespace {
 remote_session_store g_remote_session_store;
+
+error_type to_server_error_type(RagBridgeError error) {
+    switch (error) {
+    case RagBridgeError::invalid_request:
+        return ERROR_TYPE_INVALID_REQUEST;
+    case RagBridgeError::not_supported:
+        return ERROR_TYPE_NOT_SUPPORTED;
+    case RagBridgeError::internal_error:
+        return ERROR_TYPE_SERVER;
+    case RagBridgeError::none:
+    default:
+        return ERROR_TYPE_SERVER;
+    }
+}
 
 static std::string get_string_or_empty(const json & value, const std::string & key) {
     if (!value.is_object() || !value.contains(key) || value.at(key).is_null()) {
@@ -1100,6 +1116,7 @@ public:
     llama_model * model = nullptr;
     mtmd_context * mctx = nullptr;
     const llama_vocab * vocab = nullptr;
+    std::unique_ptr<RagServerRuntime> rag_runtime;
 
     server_queue    queue_tasks;
     server_response queue_results;
@@ -1156,6 +1173,11 @@ private:
     bool sleeping = false;
 
     void destroy() {
+        if (rag_runtime) {
+            rag_runtime->shutdown();
+            rag_runtime.reset();
+        }
+
         llama_init.reset();
 
         ctx = nullptr;
@@ -1415,6 +1437,17 @@ private:
 
         model_aliases = params_base.model_alias;
         model_tags    = params_base.model_tags;
+
+        if (params_base.rag_enable) {
+            rag_runtime = std::make_unique<RagServerRuntime>();
+            if (!rag_runtime->init(params_base, model, ctx, vocab)) {
+                SRV_WRN("%s", "failed to initialize isolated RAG runtime, disabling built-in RAG\n");
+                rag_runtime.reset();
+                params_base.rag_enable = false;
+            } else {
+                SRV_INF("%s", "isolated RAG runtime initialized\n");
+            }
+        }
 
         // propagate new defaults back to caller
         params = params_base;
@@ -4484,6 +4517,11 @@ void server_routes::init_routes() {
         auto res = create_response();
         std::vector<raw_buffer> files;
         json body = json::parse(req.body);
+        RagIntegrationBridge rag_bridge(params, ctx_server.rag_runtime.get());
+        std::string rag_error;
+        if (!rag_bridge.maybe_inject_chat_context(body, &rag_error) && !rag_error.empty()) {
+            SRV_WRN("RAG injection skipped: %s\n", rag_error.c_str());
+        }
         json body_parsed = oaicompat_chat_params_parse(
             body,
             meta->chat_params,
@@ -4552,6 +4590,11 @@ void server_routes::init_routes() {
         auto res = create_response();
         std::vector<raw_buffer> files;
         json body = convert_responses_to_chatcmpl(json::parse(req.body));
+        RagIntegrationBridge rag_bridge(params, ctx_server.rag_runtime.get());
+        std::string rag_error;
+        if (!rag_bridge.maybe_inject_chat_context(body, &rag_error) && !rag_error.empty()) {
+            SRV_WRN("RAG injection skipped: %s\n", rag_error.c_str());
+        }
         SRV_DBG("%s\n", "Request converted: OpenAI Responses -> OpenAI Chat Completions");
         SRV_DBG("converted request: %s\n", body.dump().c_str());
         json body_parsed = oaicompat_chat_params_parse(
@@ -4837,6 +4880,118 @@ void server_routes::init_routes() {
             top_n);
 
         res->ok(root);
+        return res;
+    };
+
+    this->post_rag_index = [this](const server_http_req & req) {
+        auto res = create_response();
+        RagIntegrationBridge rag_bridge(params, ctx_server.rag_runtime.get());
+        const RagBridgeResult result = rag_bridge.build_index_response(json::parse(req.body));
+        if (!result.ok) {
+            res->error(format_error_response(result.message, to_server_error_type(result.error)));
+            return res;
+        }
+        res->ok(result.payload);
+        return res;
+    };
+
+    this->get_rag_index_status = [this](const server_http_req &) {
+        auto res = create_response();
+        RagIntegrationBridge rag_bridge(params, ctx_server.rag_runtime.get());
+        const RagBridgeResult result = rag_bridge.build_status_response();
+        if (!result.ok) {
+            res->error(format_error_response(result.message, to_server_error_type(result.error)));
+            return res;
+        }
+        res->ok(result.payload);
+        return res;
+    };
+
+    this->post_rag_add = [this](const server_http_req & req) {
+        auto res = create_response();
+        RagIntegrationBridge rag_bridge(params, ctx_server.rag_runtime.get());
+        const RagBridgeResult result = rag_bridge.build_add_response(json::parse(req.body));
+        if (!result.ok) {
+            res->error(format_error_response(result.message, to_server_error_type(result.error)));
+            return res;
+        }
+        res->ok(result.payload);
+        return res;
+    };
+
+    this->post_rag_search = [this](const server_http_req & req) {
+        auto res = create_response();
+        RagIntegrationBridge rag_bridge(params, ctx_server.rag_runtime.get());
+        const RagBridgeResult result = rag_bridge.build_search_response(json::parse(req.body));
+        if (!result.ok) {
+            res->error(format_error_response(result.message, to_server_error_type(result.error)));
+            return res;
+        }
+        res->ok(result.payload);
+        return res;
+    };
+
+    this->post_rag_explain = [this](const server_http_req & req) {
+        auto res = create_response();
+        RagIntegrationBridge rag_bridge(params, ctx_server.rag_runtime.get());
+        const RagBridgeResult result = rag_bridge.build_explain_response(json::parse(req.body));
+        if (!result.ok) {
+            res->error(format_error_response(result.message, to_server_error_type(result.error)));
+            return res;
+        }
+        res->ok(result.payload);
+        return res;
+    };
+
+    this->post_rag_chat_context = [this](const server_http_req & req) {
+        auto res = create_response();
+        RagIntegrationBridge rag_bridge(params, ctx_server.rag_runtime.get());
+        const RagBridgeResult result = rag_bridge.build_chat_context_response(json::parse(req.body));
+        if (!result.ok) {
+            res->error(format_error_response(result.message, to_server_error_type(result.error)));
+            return res;
+        }
+        res->ok(result.payload);
+        return res;
+    };
+
+    this->post_rag_clips_meta = [this](const server_http_req & req) {
+        auto res = create_response();
+        RagIntegrationBridge rag_bridge(params, ctx_server.rag_runtime.get());
+        const RagBridgeResult result = rag_bridge.build_clips_meta_response(json::parse(req.body));
+        if (!result.ok) {
+            res->error(format_error_response(result.message, to_server_error_type(result.error)));
+            return res;
+        }
+        res->ok(result.payload);
+        return res;
+    };
+
+    this->get_rag_clips_manifest = [this](const server_http_req &) {
+        auto res = create_response();
+        RagIntegrationBridge rag_bridge(params, ctx_server.rag_runtime.get());
+        const RagBridgeResult result = rag_bridge.build_clips_manifest_response();
+        if (!result.ok) {
+            res->error(format_error_response(result.message, to_server_error_type(result.error)));
+            return res;
+        }
+        res->ok(result.payload);
+        return res;
+    };
+
+    this->post_rag_clips_run = [this](const server_http_req & req) {
+        auto res = create_response();
+        RagIntegrationBridge rag_bridge(params, ctx_server.rag_runtime.get());
+        LOG_INF("%s: handling /rag/clips/run request\n", __func__);
+        const RagBridgeResult result = rag_bridge.build_clips_run_response(json::parse(req.body));
+        LOG_INF("%s: /rag/clips/run bridge result ok=%s\n", __func__, result.ok ? "true" : "false");
+        if (!result.ok) {
+            res->error(format_error_response(result.message, to_server_error_type(result.error)));
+            return res;
+        }
+        LOG_INF("%s: serializing /rag/clips/run response\n", __func__);
+        res->ok(result.payload);
+        LOG_INF("%s: /rag/clips/run response serialized\n", __func__);
         return res;
     };
 

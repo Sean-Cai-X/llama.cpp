@@ -2891,6 +2891,113 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_DEBUG}).set_env("LLAMA_ARG_EMBEDDINGS"));
     add_opt(common_arg(
+        {"--rag-enable"},
+        string_format("enable built-in RAG indexing and retrieval endpoints (default: %s)", params.rag_enable ? "enabled" : "disabled"),
+        [](common_params & params) {
+            params.rag_enable = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_ENABLE"));
+    add_opt(common_arg(
+        {"--rag-index-path"}, "PATH",
+        string_format("path prefix used for persisted RAG index files (default: %s)", params.rag_index_path.c_str()),
+        [](common_params & params, const std::string & value) {
+            params.rag_index_path = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_INDEX_PATH"));
+    add_opt(common_arg(
+        {"--model-embed"}, "FNAME",
+        "path to a dedicated embedding model for RAG (default: reuse main model when possible)",
+        [](common_params & params, const std::string & value) {
+            params.model_embed_path = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_MODEL_EMBED"));
+    add_opt(common_arg(
+        {"--n-gpu-layers-embed"}, "N",
+        string_format("GPU layers for the embedding model used by RAG (default: %d)", params.n_gpu_layers_embed),
+        [](common_params & params, int value) {
+            params.n_gpu_layers_embed = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_N_GPU_LAYERS_EMBED"));
+    add_opt(common_arg(
+        {"--rag-top-k"}, "N",
+        string_format("default number of chunks returned by RAG search (default: %d)", params.rag_top_k),
+        [](common_params & params, int value) {
+            params.rag_top_k = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_TOP_K"));
+    add_opt(common_arg(
+        {"--rag-chunk-size"}, "N",
+        string_format("RAG document chunk size in tokens (default: %d)", params.rag_chunk_size),
+        [](common_params & params, int value) {
+            params.rag_chunk_size = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_CHUNK_SIZE"));
+    add_opt(common_arg(
+        {"--rag-chunk-overlap"}, "N",
+        string_format("RAG chunk overlap in tokens (default: %d)", params.rag_chunk_overlap),
+        [](common_params & params, int value) {
+            params.rag_chunk_overlap = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_CHUNK_OVERLAP"));
+    add_opt(common_arg(
+        {"--rag-hybrid"},
+        {"--no-rag-hybrid"},
+        string_format("enable hybrid FAISS+BM25 retrieval for RAG (default: %s)", params.rag_hybrid_search ? "enabled" : "disabled"),
+        [](common_params & params, bool value) {
+            params.rag_hybrid_search = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_HYBRID"));
+    add_opt(common_arg(
+        {"--rag-auto-search"},
+        {"--no-rag-auto-search"},
+        string_format("automatically inject RAG context for chat completions (default: %s)", params.rag_auto_search ? "enabled" : "disabled"),
+        [](common_params & params, bool value) {
+            params.rag_auto_search = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_AUTO_SEARCH"));
+    add_opt(common_arg(
+        {"--rag-search-timeout-ms"}, "N",
+        string_format("reserved timeout budget for RAG lookups in chat flows (default: %d)", params.rag_search_timeout_ms),
+        [](common_params & params, int value) {
+            params.rag_search_timeout_ms = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_SEARCH_TIMEOUT_MS"));
+    add_opt(common_arg(
+        {"--rag-clips-enable"},
+        string_format("enable CLIPS rule runner for RAG meta facts (default: %s)", params.rag_clips_enable ? "enabled" : "disabled"),
+        [](common_params & params) {
+            params.rag_clips_enable = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_CLIPS_ENABLE"));
+    add_opt(common_arg(
+        {"--rag-clips-rules-dir"}, "PATH",
+        "directory containing CLIPS rule files and manifest for RAG",
+        [](common_params & params, const std::string & value) {
+            params.rag_clips_rules_dir = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_CLIPS_RULES_DIR"));
+    add_opt(common_arg(
+        {"--rag-clips-rule-set"}, "NAME",
+        string_format("CLIPS rule set id loaded from the RAG manifest (default: %s)", params.rag_clips_rule_set.c_str()),
+        [](common_params & params, const std::string & value) {
+            params.rag_clips_rule_set = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_CLIPS_RULE_SET"));
+    add_opt(common_arg(
+        {"--rag-clips-memory-pool-mb"}, "N",
+        string_format("reserved CLIPS batch memory pool budget in MB (default: %d)", params.rag_clips_memory_pool_mb),
+        [](common_params & params, int value) {
+            params.rag_clips_memory_pool_mb = value > 0 ? value : 8;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_CLIPS_MEMORY_POOL_MB"));
+    add_opt(common_arg(
+        {"--rag-clips-batch-fact-limit"}, "N",
+        string_format("maximum CLIPS facts admitted per run batch before storage-backed paging is required (default: %d)", params.rag_clips_batch_fact_limit),
+        [](common_params & params, int value) {
+            params.rag_clips_batch_fact_limit = value > 0 ? value : 128;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_CLIPS_BATCH_FACT_LIMIT"));
+    add_opt(common_arg(
         {"--rerank", "--reranking"},
         string_format("enable reranking endpoint on server (default: %s)", "disabled"),
         [](common_params & params) {

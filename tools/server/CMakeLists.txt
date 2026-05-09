@@ -1,5 +1,7 @@
 include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
+add_subdirectory(RAG)
+
 # server-context containing the core server logic, used by llama-server and CLI
 
 set(TARGET server-context)
@@ -25,7 +27,8 @@ endif()
 
 target_include_directories(${TARGET} PRIVATE ../mtmd)
 target_include_directories(${TARGET} PRIVATE ${CMAKE_SOURCE_DIR})
-target_link_libraries(${TARGET} PUBLIC llama-common mtmd ${CMAKE_THREAD_LIBS_INIT})
+target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/RAG/src)
+target_link_libraries(${TARGET} PUBLIC llama-common mtmd server-rag-core ${CMAKE_THREAD_LIBS_INIT})
 
 
 # llama-server executable

@@ -399,6 +399,22 @@ struct lr_opt {
 struct ggml_opt_optimizer_params common_opt_lr_pars(void * userdata);
 
 struct common_params {
+    bool        rag_enable             = false;
+    std::string rag_index_path         = "rag_index.index";
+    std::string model_embed_path       = "";
+    int         rag_top_k              = 3;
+    int         rag_chunk_size         = 512;
+    int         rag_chunk_overlap      = 64;
+    bool        rag_hybrid_search      = true;
+    int         n_gpu_layers_embed     = -1;
+    bool        rag_auto_search        = true;
+    int         rag_search_timeout_ms  = 500;
+    bool        rag_clips_enable       = false;
+    std::string rag_clips_rules_dir    = "";
+    std::string rag_clips_rule_set     = "rag-meta-core";
+    int         rag_clips_memory_pool_mb = 8;
+    int         rag_clips_batch_fact_limit = 128;
+
     int32_t n_predict             =    -1; // max. number of new tokens to predict, -1 == no limit
     int32_t n_ctx                 =     0; // context size, 0 == context the model was trained with
     int32_t n_batch               =  2048; // logical batch size for prompt processing (must be >=32 to use BLAS)
