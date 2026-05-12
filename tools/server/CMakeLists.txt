@@ -19,6 +19,55 @@ add_library(${TARGET} STATIC
     server-remote-session.h
     server-tools.cpp
     server-tools.h
+
+        # PR-1: JSON utils + remote-session helpers
+    server-json-utils.cpp
+    server-json-utils.h
+    server-remote-session-turn.cpp
+    server-remote-session-turn.h
+
+    # PR-2: RAG routes
+    server-response-generator.h
+    server-rag-routes.cpp
+    server-rag-routes.h
+
+    # PR-3: embeddings / rerank routes
+    server-embedding-routes.cpp
+    server-embedding-routes.h
+
+    # PR-4: slot save / restore / erase routes
+    server-slot-action-routes.cpp
+    server-slot-action-routes.h
+
+    # PR-5: server_slot
+    server-slot.cpp
+    server-slot.h
+
+    # PR-6: server_metrics
+    server-metrics.cpp
+    server-metrics.h
+
+    # PR-7: LoRA manager + routes
+    server-lora-manager.cpp
+    server-lora-manager.h
+    server-lora-routes.cpp
+    server-lora-routes.h
+
+    # PR-8: token response processor
+    server-token-processor.cpp
+    server-token-processor.h
+
+    # PR-9: task dispatcher
+    server-task-dispatcher.cpp
+    server-task-dispatcher.h
+
+    # PR-10: update_slots helper
+    server-slot-updater.cpp
+    server-slot-updater.h
+
+    # PR-11: speculative decoder
+    server-speculative-decoder.cpp
+    server-speculative-decoder.h
 )
 
 if (BUILD_SHARED_LIBS)
