@@ -8,6 +8,58 @@
 
 namespace server_embedding_routes {
 
+namespace {
+
+bool reject_encoder_input_over_ubatch(
+        std::unique_ptr<server_res_generator> & res,
+        const route_context & ctx,
+        const server_tokens & tokens,
+        const char * route_name) {
+    if (!ctx.model || !llama_model_has_encoder(ctx.model)) {
+        return false;
+    }
+
+    const uint32_t n_ubatch = ctx.n_ubatch;
+    if (n_ubatch == 0 || tokens.size() <= n_ubatch) {
+        return false;
+    }
+
+    const std::string message = string_format(
+        "%s input is too long for the current encoder runtime: token_count=%zu exceeds n_ubatch=%u; split or shorten the input",
+        route_name,
+        tokens.size(),
+        n_ubatch);
+
+    LOG_WRN("%s\n", message.c_str());
+    res->error(format_error_response(message, ERROR_TYPE_INVALID_REQUEST));
+    return true;
+}
+
+bool reject_encoder_input_over_ubatch(
+        std::unique_ptr<server_res_generator> & res,
+        const route_context & ctx,
+        const std::vector<server_tokens> & tokenized_inputs,
+        const char * route_name) {
+    if (!ctx.model || !llama_model_has_encoder(ctx.model)) {
+        return false;
+    }
+
+    const uint32_t n_ubatch = ctx.n_ubatch;
+    if (n_ubatch == 0) {
+        return false;
+    }
+
+    for (const auto & tokens : tokenized_inputs) {
+        if (reject_encoder_input_over_ubatch(res, ctx, tokens, route_name)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+} // namespace
+
 std::unique_ptr<server_res_generator> handle_embeddings(
         const server_http_req & req,
         const route_context & ctx,
@@ -66,6 +118,10 @@ std::unique_ptr<server_res_generator> handle_embeddings(
         prompt,
         true,
         true);
+
+    if (reject_encoder_input_over_ubatch(res, ctx, tokenized_prompts, "embedding")) {
+        return res;
+    }
 
     for (const auto & tokens : tokenized_prompts) {
         // this check is necessary for models that do not add BOS token to the input
@@ -205,6 +261,10 @@ std::unique_ptr<server_res_generator> handle_rerank(
                 ctx.mctx,
                 query,
                 documents[i]);
+
+            if (reject_encoder_input_over_ubatch(res, ctx, tokens, "rerank")) {
+                return res;
+            }
 
             server_task task(SERVER_TASK_TYPE_RERANK);
 

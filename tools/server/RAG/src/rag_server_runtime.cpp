@@ -169,16 +169,29 @@ bool RagServerRuntime::init(common_params & params, llama_model * model, llama_c
     if (!params_base_.model_embed_path.empty()) {
         auto embed_params = params_base_;
         embed_params.model.path = params_base_.model_embed_path;
-        embed_params.n_gpu_layers = params_base_.n_gpu_layers_embed;
+        embed_params.n_gpu_layers = params_base_.rag_embed_n_gpu_layers;
+        embed_params.n_ctx = params_base_.rag_embed_ctx_size;
+        embed_params.n_batch = params_base_.rag_embed_batch;
+        embed_params.n_ubatch = params_base_.rag_embed_ubatch;
         embed_params.embedding = true;
-        embed_params.pooling_type = LLAMA_POOLING_TYPE_MEAN;
+        embed_params.pooling_type = params_base_.rag_embed_pooling_type;
         embed_params.attention_type = LLAMA_ATTENTION_TYPE_NON_CAUSAL;
         embed_params.n_parallel = 1;
+        embed_params.mmproj.path.clear();
+        embed_params.mmproj.url.clear();
+        embed_params.no_mmproj = true;
 
         llama_init_embed_ = common_init_from_params(embed_params);
         if (llama_init_embed_ && llama_init_embed_->model() && llama_init_embed_->context()) {
             ctx_embed_ = llama_init_embed_->context();
-            LOG_INF("%s: loaded dedicated embedding model '%s'\n", __func__, params_base_.model_embed_path.c_str());
+            LOG_INF("%s: loaded dedicated embedding model '%s' (ngl=%d, ctx=%d, batch=%d, ubatch=%d, pooling=%d)\n",
+                __func__,
+                params_base_.model_embed_path.c_str(),
+                embed_params.n_gpu_layers,
+                embed_params.n_ctx,
+                embed_params.n_batch,
+                embed_params.n_ubatch,
+                static_cast<int>(embed_params.pooling_type));
         } else {
             LOG_WRN("%s: failed to load dedicated embedding model, falling back to the main model when possible\n", __func__);
         }

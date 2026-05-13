@@ -237,6 +237,18 @@ std::vector<float> RagEngine::get_embedding_locked(const std::string & text) {
         return {};
     }
 
+    if (llama_model_has_encoder(model_embed_)) {
+        const uint32_t n_ubatch = llama_n_ubatch(ctx_embed_);
+        if (n_ubatch > 0 && tokens.size() > n_ubatch) {
+            LOG_WRN(
+                "%s: skipping embedding because token_count=%zu exceeds encoder n_ubatch=%u\n",
+                __func__,
+                tokens.size(),
+                n_ubatch);
+            return {};
+        }
+    }
+
     llama_batch batch = llama_batch_init((int32_t) tokens.size(), 0, 1);
     batch.n_tokens = (int32_t) tokens.size();
     for (size_t i = 0; i < tokens.size(); ++i) {

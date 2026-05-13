@@ -1107,9 +1107,15 @@ private:
                 slot.task->params.sampling.preserved_tokens.find(token) != slot.task->params.sampling.preserved_tokens.end();
         };
 
+        const bool memoryless_context = llama_get_memory(ctx) == nullptr;
+
         // first, add sampled tokens from any ongoing sequences
         for (auto & slot : slots) {
             if (slot.state != SLOT_STATE_GENERATING) {
+                continue;
+            }
+
+            if (memoryless_context && slot_batched) {
                 continue;
             }
 
@@ -1124,7 +1130,7 @@ private:
         }
 
         // process in chunks of params.n_batch
-        int32_t n_batch  = llama_n_batch(ctx);
+        int32_t n_batch  = memoryless_context ? llama_n_ubatch(ctx) : llama_n_batch(ctx);
         int32_t n_ubatch = llama_n_ubatch(ctx);
 
         float  alora_scale       = -1.0f;
@@ -1134,6 +1140,10 @@ private:
         if (params_base.cont_batching || batch.n_tokens == 0) {
             for (auto & slot : slots) {
                 if (!slot.is_processing()) {
+                    continue;
+                }
+
+                if (memoryless_context && slot_batched && slot_batched != &slot) {
                     continue;
                 }
 
@@ -1201,12 +1211,14 @@ private:
                             continue;
                         }
 
-                        if (!slot.can_split()) {
+                        const bool requires_single_ubatch = memoryless_context || !slot.can_split();
+
+                        if (requires_single_ubatch) {
                             if (slot.task->n_tokens() > n_ubatch) {
                                 send_error(slot,
                                            string_format(
-                                               "input (%d tokens) is too large to process. increase the physical batch "
-                                               "size (current batch size: %d)",
+                                               "input (%d tokens) is too large to process with the current encoder/runtime limits. "
+                                               "split or shorten the input, or increase the physical batch size (current n_ubatch: %d)",
                                                slot.task->n_tokens(), n_ubatch),
                                            ERROR_TYPE_SERVER);
                                 slot.release();
@@ -1741,7 +1753,7 @@ private:
             i_next = i + n_tokens;
 
             // on successful decode, restore the original batch size
-            n_batch = llama_n_batch(ctx);
+            n_batch = memoryless_context ? llama_n_ubatch(ctx) : llama_n_batch(ctx);
 
             // handle `n_cmpl > 1` tasks - when the main prompt is processed, activate all child tasks too
             for (auto & slot : slots) {
@@ -2014,6 +2026,7 @@ server_context_meta server_context::get_meta() const {
         /* has_inp_audio          */ impl->chat_params.allow_audio,
         /* json_webui_settings    */ impl->json_webui_settings,
         /* slot_n_ctx             */ impl->get_slot_n_ctx(),
+        /* n_ubatch               */ llama_n_ubatch(impl->ctx),
         /* pooling_type           */ llama_pooling_type(impl->ctx),
 
         /* chat_params            */ impl->chat_params,
@@ -2526,6 +2539,7 @@ void server_routes::init_routes() {
     auto make_embedding_route_context = [this]() {
         return server_embedding_routes::route_context{
             /*.params       = */ params,
+            /*.n_ubatch     = */ meta->n_ubatch,
             /*.model        = */ ctx_server.model,
             /*.vocab        = */ ctx_server.vocab,
             /*.mctx         = */ ctx_server.mctx,
@@ -3329,5 +3343,3 @@ this->post_lora_adapters = [this](const server_http_req& req) {
     };
  
 }
-
-

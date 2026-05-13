@@ -23,6 +23,7 @@ struct server_context_meta {
     bool has_inp_audio;
     json json_webui_settings;
     int slot_n_ctx;
+    uint32_t n_ubatch;
     enum llama_pooling_type pooling_type;
 
     // chat params

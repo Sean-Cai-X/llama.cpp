@@ -2916,8 +2916,50 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         string_format("GPU layers for the embedding model used by RAG (default: %d)", params.n_gpu_layers_embed),
         [](common_params & params, int value) {
             params.n_gpu_layers_embed = value;
+            params.rag_embed_n_gpu_layers = value;
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_N_GPU_LAYERS_EMBED"));
+    add_opt(common_arg(
+        {"--rag-embed-ngl"}, "N",
+        string_format("GPU layers for the dedicated RAG embedding model (default: %d)", params.rag_embed_n_gpu_layers),
+        [](common_params & params, int value) {
+            params.rag_embed_n_gpu_layers = value;
+            params.n_gpu_layers_embed = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_EMBED_NGL"));
+    add_opt(common_arg(
+        {"--rag-embed-ctx-size"}, "N",
+        string_format("context size for the dedicated RAG embedding model (default: %d)", params.rag_embed_ctx_size),
+        [](common_params & params, int value) {
+            params.rag_embed_ctx_size = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_EMBED_CTX_SIZE"));
+    add_opt(common_arg(
+        {"--rag-embed-batch"}, "N",
+        string_format("logical batch size for the dedicated RAG embedding model (default: %d)", params.rag_embed_batch),
+        [](common_params & params, int value) {
+            params.rag_embed_batch = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_EMBED_BATCH"));
+    add_opt(common_arg(
+        {"--rag-embed-ubatch"}, "N",
+        string_format("physical batch size for the dedicated RAG embedding model (default: %d)", params.rag_embed_ubatch),
+        [](common_params & params, int value) {
+            params.rag_embed_ubatch = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_EMBED_UBATCH"));
+    add_opt(common_arg(
+        {"--rag-embed-pooling"}, "{none,mean,cls,last,rank}",
+        "pooling type for the dedicated RAG embedding model",
+        [](common_params & params, const std::string & value) {
+            /**/ if (value == "none") { params.rag_embed_pooling_type = LLAMA_POOLING_TYPE_NONE; }
+            else if (value == "mean") { params.rag_embed_pooling_type = LLAMA_POOLING_TYPE_MEAN; }
+            else if (value == "cls")  { params.rag_embed_pooling_type = LLAMA_POOLING_TYPE_CLS;  }
+            else if (value == "last") { params.rag_embed_pooling_type = LLAMA_POOLING_TYPE_LAST; }
+            else if (value == "rank") { params.rag_embed_pooling_type = LLAMA_POOLING_TYPE_RANK; }
+            else { throw std::invalid_argument("invalid value"); }
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RAG_EMBED_POOLING"));
     add_opt(common_arg(
         {"--rag-top-k"}, "N",
         string_format("default number of chunks returned by RAG search (default: %d)", params.rag_top_k),

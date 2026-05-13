@@ -407,6 +407,11 @@ struct common_params {
     int         rag_chunk_overlap      = 64;
     bool        rag_hybrid_search      = true;
     int         n_gpu_layers_embed     = -1;
+    int         rag_embed_n_gpu_layers = 0;
+    int         rag_embed_ctx_size     = 8192;
+    int         rag_embed_batch        = 512;
+    int         rag_embed_ubatch       = 128;
+    enum llama_pooling_type rag_embed_pooling_type = LLAMA_POOLING_TYPE_CLS;
     bool        rag_auto_search        = true;
     int         rag_search_timeout_ms  = 500;
     bool        rag_clips_enable       = false;

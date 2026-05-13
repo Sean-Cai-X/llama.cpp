@@ -18,6 +18,7 @@ namespace server_embedding_routes {
     struct route_context {
         const common_params& params;
 
+        uint32_t n_ubatch = 0;
         llama_model* model = nullptr;
         const llama_vocab* vocab = nullptr;
         mtmd_context* mctx = nullptr;
