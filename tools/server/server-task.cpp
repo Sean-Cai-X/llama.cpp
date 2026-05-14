@@ -281,6 +281,11 @@ task_params server_task::params_from_json_cmpl(
     params.response_fields  = json_value(data,       "response_fields",    std::vector<std::string>());
     params.structured_conclusion_input = json::object();
     for (const auto & key : {
+            "request_id",
+            "trace_id",
+            "rag_request_id",
+            "rag_trace_id",
+            "rag_query_id",
             "task_state",
             "reasoning_level",
             "primary_intent",
@@ -297,7 +302,10 @@ task_params server_task::params_from_json_cmpl(
             "expression_keys",
             "query",
             "arguments_text",
-            "summary"
+            "summary",
+            "approved_context",
+            "admission_summary",
+            "supporting_slice_ids"
         }) {
         if (data.contains(key)) {
             params.structured_conclusion_input[key] = data.at(key);
@@ -1461,6 +1469,8 @@ static json structured_conclusion_to_json(
     ensure_array("evidence_refs");
     ensure_array("risk_flags");
     ensure_array("expression_keys");
+    ensure_array("approved_context");
+    ensure_array("supporting_slice_ids");
 
     const bool missing_primary_intent = primary_intent.empty() || primary_intent == "unresolved";
     const bool missing_evidence = result.at("evidence_refs").empty() && content.empty();
@@ -1474,6 +1484,11 @@ static json structured_conclusion_to_json(
     result["next_action"] = get_string("next_action");
     result["session_id"] = get_string("session_id");
     result["turn_id"] = get_string("turn_id");
+    result["request_id"] = get_string("request_id", get_string("rag_request_id"));
+    result["trace_id"] = get_string("trace_id", get_string("rag_trace_id"));
+    result["rag_request_id"] = get_string("rag_request_id", get_string("request_id"));
+    result["rag_trace_id"] = get_string("rag_trace_id", get_string("trace_id"));
+    result["rag_query_id"] = get_string("rag_query_id");
     result["query"] = get_string("query");
     result["arguments_text"] = get_string("arguments_text");
     result["slice_summary"] = get_string("slice_summary", summary);

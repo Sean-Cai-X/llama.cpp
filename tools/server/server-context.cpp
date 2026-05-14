@@ -9,6 +9,7 @@
 #include "server-remote-session-turn.h"
 #include "server-response-generator.h"
 #include "server-rag-routes.h"
+#include "server-trace-registry.h"
 #include "server-embedding-routes.h"
 #include "server-slot-action-routes.h"
 #include "server-slot.h"
@@ -35,11 +36,13 @@
 #include <cinttypes>
 #include <exception>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <filesystem>
 #include <sstream>
 #include <utility>
 #include <vector>
+#include <unordered_set>
 
 // fix problem with std::min and std::max
 #if defined(_WIN32)
@@ -67,6 +70,197 @@ using server_remote_session_turn::build_messages_from_session;
 using server_remote_session_turn::build_ventriloquy_result;
 using server_remote_session_turn::default_tool_availability_snapshot;
 
+json build_rag_supporting_slice_ids(const json & approved_context) {
+    json slice_ids = json::array();
+    std::unordered_set<std::string> seen;
+    if (!approved_context.is_array()) {
+        return slice_ids;
+    }
+
+    for (const auto & item : approved_context) {
+        if (!item.is_object()) {
+            continue;
+        }
+        const std::string slice_id = item.value("slice_id", item.value("source_id", ""));
+        if (slice_id.empty() || !seen.insert(slice_id).second) {
+            continue;
+        }
+        slice_ids.push_back(slice_id);
+    }
+
+    return slice_ids;
+}
+
+std::string extract_completion_text(const json & payload) {
+    if (payload.contains("choices") && payload["choices"].is_array() && !payload["choices"].empty()) {
+        const json & choice = payload["choices"][0];
+        if (choice.contains("message") && choice["message"].is_object()) {
+            return flatten_message_content(choice["message"].value("content", json()));
+        }
+        if (choice.contains("text") && choice["text"].is_string()) {
+            return choice["text"].get<std::string>();
+        }
+    }
+    return "";
+}
+
+json build_llama_output_validation(
+        const std::string & request_id,
+        const std::string & trace_id,
+        const std::string & model_task_id,
+        const std::string & content,
+        const json & approved_context,
+        const json & supporting_slice_ids) {
+    const bool has_content = !content.empty();
+    const bool has_approved_context = approved_context.is_array() && !approved_context.empty();
+    const bool has_supporting_slice_ids = supporting_slice_ids.is_array() && !supporting_slice_ids.empty();
+
+    std::string decision = "PASS";
+    std::string reason = "ALL_CLAIMS_SUPPORTED_BY_APPROVED_CONTEXT";
+    std::string status = "APPROVED";
+
+    if (!has_content) {
+        decision = "REJECT";
+        reason = "EMPTY_OUTPUT";
+        status = "RETRY_REQUIRED";
+    } else if (!has_approved_context) {
+        decision = "REVIEW";
+        reason = "NO_APPROVED_CONTEXT";
+        status = "HUMAN_REVIEW";
+    } else if (!has_supporting_slice_ids) {
+        decision = "REVIEW";
+        reason = "MISSING_SUPPORTING_SLICE_IDS";
+        status = "HUMAN_REVIEW";
+    }
+
+    return json{
+        {"model_task_id", model_task_id},
+        {"request_id", request_id},
+        {"trace_id", trace_id},
+        {"decision", decision},
+        {"reason", reason},
+        {"status", status},
+    };
+}
+
+void attach_rag_completion_metadata(json & payload, const json & data, const std::string & model_task_id) {
+    const json approved_context = data.value("approved_context", json::array());
+    const json supporting_slice_ids = data.contains("supporting_slice_ids")
+        ? data["supporting_slice_ids"]
+        : build_rag_supporting_slice_ids(approved_context);
+    const std::string request_id = data.value("rag_request_id", data.value("request_id", ""));
+    const std::string trace_id = data.value("rag_trace_id", data.value("trace_id", ""));
+    const std::string query_id = data.value("rag_query_id", data.value("query_id", ""));
+    const std::string content = extract_completion_text(payload);
+    const std::string content_hash = content.empty()
+        ? ""
+        : "HASH-" + std::to_string(std::hash<std::string>{}(content));
+    const bool approved_by_clips = approved_context.is_array() && !approved_context.empty();
+    const json output_validation = build_llama_output_validation(
+        request_id,
+        trace_id,
+        model_task_id,
+        content,
+        approved_context,
+        supporting_slice_ids);
+
+    if (!request_id.empty()) {
+        payload["request_id"] = request_id;
+    }
+    if (!trace_id.empty()) {
+        payload["trace_id"] = trace_id;
+    }
+    if (!query_id.empty()) {
+        payload["query_id"] = query_id;
+    }
+
+    payload["approved_context"] = approved_context;
+    payload["supporting_slice_ids"] = supporting_slice_ids;
+    if (data.contains("admission_summary")) {
+        payload["admission_summary"] = data["admission_summary"];
+    }
+
+    payload["llama_output_candidate"] = json{
+        {"model_task_id", model_task_id},
+        {"request_id", request_id},
+        {"trace_id", trace_id},
+        {"query_id", query_id},
+        {"output_hash", content_hash},
+        {"status", "CANDIDATE"},
+    };
+
+    payload["final_output"] = json{
+        {"request_id", request_id},
+        {"trace_id", trace_id},
+        {"content_hash", content_hash},
+        {"approved_by_clips", approved_by_clips},
+        {"supporting_slice_ids", supporting_slice_ids},
+        {"status", approved_by_clips ? "APPROVED" : "UNCONSTRAINED"},
+    };
+    payload["llama_output_validation"] = output_validation;
+
+    if (payload.contains("structured_conclusion") && payload["structured_conclusion"].is_object()) {
+        payload["structured_conclusion"]["request_id"] = request_id;
+        payload["structured_conclusion"]["trace_id"] = trace_id;
+        payload["structured_conclusion"]["rag_request_id"] = request_id;
+        payload["structured_conclusion"]["rag_trace_id"] = trace_id;
+        payload["structured_conclusion"]["rag_query_id"] = query_id;
+        payload["structured_conclusion"]["approved_context"] = approved_context;
+        payload["structured_conclusion"]["supporting_slice_ids"] = supporting_slice_ids;
+        payload["structured_conclusion"]["llama_output_validation"] = output_validation;
+        if (data.contains("admission_summary")) {
+            payload["structured_conclusion"]["admission_summary"] = data["admission_summary"];
+        }
+    }
+
+    server_trace_registry::record_stage(trace_id, "completion", json{
+        {"trace_id", trace_id},
+        {"request_id", request_id},
+        {"query_id", query_id},
+        {"model_task_id", model_task_id},
+        {"approved_context", approved_context},
+        {"supporting_slice_ids", supporting_slice_ids},
+        {"admission_summary", data.value("admission_summary", json::object())},
+        {"llama_output_candidate", payload["llama_output_candidate"]},
+        {"llama_output_validation", payload["llama_output_validation"]},
+        {"final_output", payload["final_output"]},
+        {"structured_conclusion", payload.value("structured_conclusion", json::object())},
+    });
+}
+
+void propagate_rag_request_fields(const json & source_body, json & parsed_body) {
+    for (const auto & key : {
+            "request_id",
+            "trace_id",
+            "query_id",
+            "rag_request_id",
+            "rag_trace_id",
+            "rag_query_id",
+            "approved_context",
+            "admission_summary",
+            "supporting_slice_ids"
+        }) {
+        if (source_body.contains(key)) {
+            parsed_body[key] = source_body.at(key);
+        }
+    }
+}
+
+void record_injected_rag_stage(const json & body) {
+    const std::string trace_id = body.value("rag_trace_id", body.value("trace_id", ""));
+    if (trace_id.empty()) {
+        return;
+    }
+
+    server_trace_registry::record_stage(trace_id, "rag_chat_context", json{
+        {"trace_id", trace_id},
+        {"request_id", body.value("rag_request_id", body.value("request_id", ""))},
+        {"query_id", body.value("rag_query_id", body.value("query_id", ""))},
+        {"approved_context", body.value("approved_context", json::array())},
+        {"supporting_slice_ids", build_rag_supporting_slice_ids(body.value("approved_context", json::array()))},
+        {"admission_summary", body.value("admission_summary", json::object())},
+    });
+}
 
 }  // namespace
 
@@ -2149,6 +2343,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             GGML_ASSERT(!arr.empty() && "empty results");
             if (arr.size() == 1) {
                 // if single request, return single object instead of array
+                attach_rag_completion_metadata(arr[0], data, completion_id);
                 res->ok(arr[0]);
             } else if (res_type == TASK_RESPONSE_TYPE_OAI_CHAT || res_type == TASK_RESPONSE_TYPE_OAI_CMPL) {
                 // if multiple results in OAI format, we need to re-format them
@@ -2156,6 +2351,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
                 for (size_t i = 1; i < arr.size(); i++) {
                     choices.push_back(std::move(arr[i]["choices"][0]));
                 }
+                attach_rag_completion_metadata(arr[0], data, completion_id);
                 res->ok(arr[0]);
             } else {
                 // multi-results, non-OAI compat
@@ -2924,11 +3120,13 @@ this->post_chat_completions = [this](const server_http_req & req) {
         !rag_error.empty()) {
         SRV_WRN("RAG injection skipped: %s\n", rag_error.c_str());
     }
+    record_injected_rag_stage(body);
 
     json body_parsed = oaicompat_chat_params_parse(
         body,
         meta->chat_params,
         files);
+    propagate_rag_request_fields(body, body_parsed);
 
     return handle_completions_impl(
         req,
@@ -3004,6 +3202,7 @@ this->post_responses_oai = [this](const server_http_req & req) {
         !rag_error.empty()) {
         SRV_WRN("RAG injection skipped: %s\n", rag_error.c_str());
     }
+    record_injected_rag_stage(body);
 
     SRV_DBG("%s\n", "Request converted: OpenAI Responses -> OpenAI Chat Completions");
     SRV_DBG("converted request: %s\n", body.dump().c_str());
@@ -3012,6 +3211,7 @@ this->post_responses_oai = [this](const server_http_req & req) {
         body,
         meta->chat_params,
         files);
+    propagate_rag_request_fields(body, body_parsed);
 
     return handle_completions_impl(
         req,
@@ -3324,6 +3524,42 @@ this->post_rag_clips_run = [this](const server_http_req & req) {
         [this]() {
             return create_response();
         });
+};
+
+this->get_debug_trace = [this](const server_http_req & req) {
+    auto res = create_response(true);
+    const std::string trace_id = req.get_param("trace_id");
+    if (trace_id.empty()) {
+        res->error(format_error_response("trace_id is required", ERROR_TYPE_INVALID_REQUEST));
+        return res;
+    }
+
+    json payload;
+    if (!server_trace_registry::get_trace(trace_id, payload)) {
+        res->error(format_error_response("trace_id not found", ERROR_TYPE_NOT_FOUND));
+        return res;
+    }
+
+    res->ok(payload);
+    return res;
+};
+
+this->get_debug_evidence = [this](const server_http_req & req) {
+    auto res = create_response(true);
+    const std::string slice_id = req.get_param("slice_id");
+    if (slice_id.empty()) {
+        res->error(format_error_response("slice_id is required", ERROR_TYPE_INVALID_REQUEST));
+        return res;
+    }
+
+    json payload;
+    if (!server_trace_registry::get_evidence(slice_id, payload)) {
+        res->error(format_error_response("slice_id not found", ERROR_TYPE_NOT_FOUND));
+        return res;
+    }
+
+    res->ok(payload);
+    return res;
 };
 
 this->get_lora_adapters = [this](const server_http_req& req) {

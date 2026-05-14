@@ -167,6 +167,8 @@ int main(int argc, char ** argv) {
         routes.post_rag_search             = models_routes->proxy_post;
         routes.post_rag_explain            = models_routes->proxy_post;
         routes.post_rag_chat_context       = models_routes->proxy_post;
+        routes.get_debug_trace             = models_routes->proxy_get;
+        routes.get_debug_evidence          = models_routes->proxy_get;
         routes.post_tokenize               = models_routes->proxy_post;
         routes.post_detokenize             = models_routes->proxy_post;
         routes.post_apply_template         = models_routes->proxy_post;
@@ -226,6 +228,8 @@ int main(int argc, char ** argv) {
     ctx_http.post("/rag/clips/meta",           ex_wrapper(routes.post_rag_clips_meta));
     ctx_http.get ("/rag/clips/manifest",       ex_wrapper(routes.get_rag_clips_manifest));
     ctx_http.post("/rag/clips/run",            ex_wrapper(routes.post_rag_clips_run));
+    ctx_http.get ("/v1/debug/trace/:trace_id", ex_wrapper(routes.get_debug_trace));
+    ctx_http.get ("/v1/debug/evidence/:slice_id", ex_wrapper(routes.get_debug_evidence));
     ctx_http.post("/tokenize",                 ex_wrapper(routes.post_tokenize));
     ctx_http.post("/detokenize",               ex_wrapper(routes.post_detokenize));
     ctx_http.post("/apply-template",           ex_wrapper(routes.post_apply_template));

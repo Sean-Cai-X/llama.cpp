@@ -135,6 +135,8 @@ struct server_routes {
     server_http_context::handler_t post_rag_clips_meta;
     server_http_context::handler_t get_rag_clips_manifest;
     server_http_context::handler_t post_rag_clips_run;
+    server_http_context::handler_t get_debug_trace;
+    server_http_context::handler_t get_debug_evidence;
     server_http_context::handler_t get_lora_adapters;
     server_http_context::handler_t post_lora_adapters;
 private:

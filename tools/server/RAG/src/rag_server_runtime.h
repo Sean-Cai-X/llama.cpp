@@ -19,6 +19,15 @@
 
 using json = nlohmann::ordered_json;
 
+struct RagTraceContext {
+    std::string request_id;
+    std::string trace_id;
+    std::string query_id;
+    std::string route;
+    std::string source_request_id;
+    int top_k = 0;
+};
+
 class RagServerRuntime {
 public:
     RagServerRuntime();
@@ -43,12 +52,12 @@ public:
 
     std::vector<RagSearchResult> search_with_metadata(const std::string & query, int top_k, int timeout_ms) const;
 
-    json build_search_payload(const std::string & query, int top_k, int timeout_ms) const;
-    json build_explain_payload(const std::string & query, int top_k, int timeout_ms) const;
-    json build_chat_context_payload(const std::string & query, int top_k, int timeout_ms) const;
-    json build_clips_meta_payload(const std::string & query, int top_k, int timeout_ms) const;
+    json build_search_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const;
+    json build_explain_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const;
+    json build_chat_context_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const;
+    json build_clips_meta_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const;
     json build_clips_manifest_payload() const;
-    json build_clips_run_payload(const std::string & query, int top_k, int timeout_ms) const;
+    json build_clips_run_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const;
     bool inject_chat_context(json & body, const std::string & query, int top_k, int timeout_ms) const;
 
     json build_status_payload() const;
@@ -65,6 +74,7 @@ private:
 
     void start_worker();
     void worker_loop();
+    RagTraceContext build_trace_context(const json & body, const std::string & route, const std::string & query, int top_k) const;
 
     common_params params_base_;
     llama_model * model_ = nullptr;

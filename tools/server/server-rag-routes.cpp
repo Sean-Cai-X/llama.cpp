@@ -1,6 +1,7 @@
 #include "server-rag-routes.h"
 
 #include "log.h"
+#include "server-trace-registry.h"
 #include "RAG/src/rag_integration_bridge.h"
 #include "RAG/src/rag_server_runtime.h"
 
@@ -127,6 +128,13 @@ std::unique_ptr<server_res_generator> handle_chat_context(
     const RagBridgeResult result =
         rag_bridge.build_chat_context_response(json::parse(req.body));
 
+    if (result.ok) {
+        server_trace_registry::record_stage(
+            result.payload.value("trace_id", ""),
+            "rag_chat_context",
+            result.payload);
+    }
+
     return finish_rag_response(std::move(res), result);
 }
 
@@ -140,6 +148,13 @@ std::unique_ptr<server_res_generator> handle_clips_meta(
     RagIntegrationBridge rag_bridge(params, rag_runtime);
     const RagBridgeResult result =
         rag_bridge.build_clips_meta_response(json::parse(req.body));
+
+    if (result.ok) {
+        server_trace_registry::record_stage(
+            result.payload.value("trace_id", ""),
+            "rag_clips_meta",
+            result.payload);
+    }
 
     return finish_rag_response(std::move(res), result);
 }
@@ -180,6 +195,11 @@ std::unique_ptr<server_res_generator> handle_clips_run(
     if (!result.ok) {
         return finish_rag_response(std::move(res), result);
     }
+
+    server_trace_registry::record_stage(
+        result.payload.value("trace_id", ""),
+        "rag_clips_run",
+        result.payload);
 
     LOG_INF("%s: serializing /rag/clips/run response\n", __func__);
 

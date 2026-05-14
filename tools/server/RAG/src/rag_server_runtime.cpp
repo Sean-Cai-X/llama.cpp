@@ -6,11 +6,17 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace {
+
+std::atomic<uint64_t> g_rag_trace_counter {0};
 
 std::string trim_copy(std::string value) {
     auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
@@ -69,6 +75,33 @@ std::string format_rag_source_label(const json & metadata) {
     return "retrieved-context";
 }
 
+std::string get_string_or_empty(const json & body, const char * key) {
+    if (!body.contains(key) || !body.at(key).is_string()) {
+        return "";
+    }
+    return body.at(key).get<std::string>();
+}
+
+std::string generate_trace_token(const char * prefix) {
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    const uint64_t now_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+    const uint64_t seq = ++g_rag_trace_counter;
+    return std::string(prefix) + "-" + std::to_string(now_ms) + "-" + std::to_string(seq);
+}
+
+json build_trace_payload(const RagTraceContext & trace, bool rag_enabled, bool clips_enabled) {
+    return json{
+        {"request_id", trace.request_id},
+        {"trace_id", trace.trace_id},
+        {"query_id", trace.query_id},
+        {"route", trace.route},
+        {"source_request_id", trace.source_request_id},
+        {"top_k", trace.top_k},
+        {"rag_enabled", rag_enabled},
+        {"clips_enabled", clips_enabled},
+    };
+}
+
 std::string extract_text_from_message_content(const json & content) {
     if (content.is_string()) {
         return content.get<std::string>();
@@ -92,16 +125,16 @@ std::string extract_text_from_message_content(const json & content) {
     return text;
 }
 
-std::string build_rag_context_block(const std::vector<RagSearchResult> & results) {
-    if (results.empty()) {
+std::string build_approved_context_block(const json & approved_context) {
+    if (!approved_context.is_array() || approved_context.empty()) {
         return "";
     }
 
-    std::string block = "Retrieved project context:\n";
-    for (size_t i = 0; i < results.size(); ++i) {
-        const json metadata = parse_rag_metadata(results[i].metadata);
-        block += "\n[" + std::to_string(i + 1) + "] " + format_rag_source_label(metadata) + "\n";
-        block += sanitize_rag_preview(results[i].chunk_text, 480) + "\n";
+    std::string block = "CLIPS-approved project context:\n";
+    for (size_t i = 0; i < approved_context.size(); ++i) {
+        const json & item = approved_context.at(i);
+        block += "\n[" + std::to_string(i + 1) + "] " + item.value("source", "approved-context") + "\n";
+        block += item.value("preview_text", "") + "\n";
     }
     return block;
 }
@@ -143,6 +176,74 @@ json build_admission_decision_item(const RagClipsAdmissionDecision & decision) {
         {"next_action", decision.next_action},
         {"raw_fact", decision.raw_fact},
     };
+}
+
+json build_approved_context_items(
+    const std::vector<RagSearchResult> & results,
+    const RagClipsFactBundle & bundle,
+    const std::vector<RagClipsAdmissionDecision> & decisions,
+    const RagTraceContext & trace) {
+    std::unordered_map<std::string, size_t> result_index_by_slice_id;
+    std::unordered_map<std::string, const RagMetaSliceLink *> link_by_slice_id;
+    std::unordered_set<std::string> emitted_slice_ids;
+
+    for (size_t i = 0; i < bundle.slice_links.size(); ++i) {
+        const auto & link = bundle.slice_links[i];
+        link_by_slice_id[link.slice_id] = &link;
+        if (i < results.size()) {
+            result_index_by_slice_id[link.slice_id] = i;
+        }
+    }
+
+    json approved = json::array();
+    for (const auto & decision : decisions) {
+        if (decision.decision != "allow") {
+            continue;
+        }
+        if (!emitted_slice_ids.insert(decision.slice_id).second) {
+            continue;
+        }
+
+        const auto link_it = link_by_slice_id.find(decision.slice_id);
+        if (link_it == link_by_slice_id.end()) {
+            continue;
+        }
+        const auto result_it = result_index_by_slice_id.find(decision.slice_id);
+        if (result_it == result_index_by_slice_id.end() || result_it->second >= results.size()) {
+            continue;
+        }
+
+        const RagMetaSliceLink & link = *link_it->second;
+        const RagSearchResult & result = results[result_it->second];
+        const json metadata = parse_rag_metadata(result.metadata);
+        approved.push_back(json{
+            {"context_id", "CTX-" + decision.slice_id},
+            {"request_id", trace.request_id},
+            {"trace_id", trace.trace_id},
+            {"query_id", trace.query_id},
+            {"source_type", link.source_type},
+            {"source_id", decision.slice_id},
+            {"slice_id", decision.slice_id},
+            {"link_id", link.link_id},
+            {"decision", decision.decision},
+            {"reason", decision.reason},
+            {"rule_id", decision.rule_id},
+            {"next_action", decision.next_action},
+            {"priority", link.info_weight},
+            {"score", result.score},
+            {"approved", true},
+            {"projection_incomplete", link.projection_incomplete},
+            {"vector_skip_reason", link.vector_skip_reason},
+            {"browser_visible_summary", link.browser_visible_summary},
+            {"body_quality", link.body_quality},
+            {"source", format_rag_source_label(metadata)},
+            {"source_info", build_source_info(metadata)},
+            {"preview_text", sanitize_rag_preview(result.chunk_text, 480)},
+            {"chunk_text", result.chunk_text},
+        });
+    }
+
+    return approved;
 }
 
 } // namespace
@@ -396,8 +497,40 @@ std::vector<RagSearchResult> RagServerRuntime::search_with_metadata(const std::s
     return rag_engine_->search_with_metadata(query, top_k, timeout_ms);
 }
 
-json RagServerRuntime::build_search_payload(const std::string & query, int top_k, int timeout_ms) const {
+RagTraceContext RagServerRuntime::build_trace_context(const json & body, const std::string & route, const std::string & query, int top_k) const {
+    RagTraceContext trace;
+    trace.request_id = get_string_or_empty(body, "request_id");
+    if (trace.request_id.empty()) {
+        trace.request_id = get_string_or_empty(body, "codex_request_id");
+    }
+    if (trace.request_id.empty()) {
+        trace.request_id = generate_trace_token("REQ");
+    }
+
+    trace.trace_id = get_string_or_empty(body, "trace_id");
+    if (trace.trace_id.empty()) {
+        trace.trace_id = trace.request_id + ".trace";
+    }
+
+    trace.query_id = get_string_or_empty(body, "query_id");
+    if (trace.query_id.empty()) {
+        trace.query_id = generate_trace_token("QUERY");
+    }
+
+    trace.source_request_id = get_string_or_empty(body, "codex_request_id");
+    if (trace.source_request_id.empty()) {
+        trace.source_request_id = trace.request_id;
+    }
+
+    trace.route = route;
+    trace.top_k = top_k;
+    (void) query;
+    return trace;
+}
+
+json RagServerRuntime::build_search_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const {
     const auto results = search_with_metadata(query, top_k, timeout_ms);
+    const RagTraceContext trace = build_trace_context(body, "/rag/search", query, top_k);
     json items = json::array();
 
     for (size_t i = 0; i < results.size(); ++i) {
@@ -414,6 +547,10 @@ json RagServerRuntime::build_search_payload(const std::string & query, int top_k
     }
 
     return json{
+        {"request_id", trace.request_id},
+        {"trace_id", trace.trace_id},
+        {"query_id", trace.query_id},
+        {"request_context", build_trace_payload(trace, enabled(), params_base_.rag_clips_enable)},
         {"query", query},
         {"retrieval_mode", params_base_.rag_hybrid_search ? "hybrid" : "dense"},
         {"count", (int) items.size()},
@@ -421,8 +558,9 @@ json RagServerRuntime::build_search_payload(const std::string & query, int top_k
     };
 }
 
-json RagServerRuntime::build_explain_payload(const std::string & query, int top_k, int timeout_ms) const {
+json RagServerRuntime::build_explain_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const {
     const auto results = search_with_metadata(query, top_k, timeout_ms);
+    const RagTraceContext trace = build_trace_context(body, "/rag/explain", query, top_k);
     json evidence = json::array();
 
     for (size_t i = 0; i < results.size(); ++i) {
@@ -437,6 +575,10 @@ json RagServerRuntime::build_explain_payload(const std::string & query, int top_
     }
 
     return json{
+        {"request_id", trace.request_id},
+        {"trace_id", trace.trace_id},
+        {"query_id", trace.query_id},
+        {"request_context", build_trace_payload(trace, enabled(), params_base_.rag_clips_enable)},
         {"query", query},
         {"retrieval_mode", params_base_.rag_hybrid_search ? "hybrid" : "dense"},
         {"summary", results.empty() ? "No relevant project context was retrieved." : "Retrieved project context is ready for downstream reasoning."},
@@ -444,19 +586,53 @@ json RagServerRuntime::build_explain_payload(const std::string & query, int top_
     };
 }
 
-json RagServerRuntime::build_chat_context_payload(const std::string & query, int top_k, int timeout_ms) const {
+json RagServerRuntime::build_chat_context_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const {
     const auto results = search_with_metadata(query, top_k, timeout_ms);
+    const std::string retrieval_mode = params_base_.rag_hybrid_search ? "hybrid" : "dense";
+    const RagTraceContext trace = build_trace_context(body, "/rag/chat/context", query, top_k);
+    const RagClipsFactBundle bundle = BuildRagClipsFactBundle(query, results, retrieval_mode);
+    const auto assertions = SerializeRagClipsFacts(bundle);
+    const RagClipsRunResult run_result = RunRagClipsRules(params_base_, bundle, assertions);
+    const json approved_context = build_approved_context_items(results, bundle, run_result.admission_report, trace);
+    const std::string route = map_clips_decision_route(run_result.dominant_decision);
+
     return json{
+        {"request_id", trace.request_id},
+        {"trace_id", trace.trace_id},
+        {"query_id", trace.query_id},
+        {"request_context", build_trace_payload(trace, enabled(), params_base_.rag_clips_enable)},
         {"query", query},
-        {"retrieval_mode", params_base_.rag_hybrid_search ? "hybrid" : "dense"},
-        {"context_block", build_rag_context_block(results)},
+        {"retrieval_mode", retrieval_mode},
+        {"ok", run_result.ok},
+        {"message", run_result.message},
+        {"raw_result_count", static_cast<int>(results.size())},
+        {"approved_context_count", static_cast<int>(approved_context.size())},
+        {"approved_context", approved_context},
+        {"context_block", build_approved_context_block(approved_context)},
+        {"admission_report", [run_result]() {
+            json report = json::array();
+            for (const auto & decision : run_result.admission_report) {
+                report.push_back(build_admission_decision_item(decision));
+            }
+            return report;
+        }()},
+        {"admission_summary", {
+            {"allow_count", run_result.allow_count},
+            {"reject_count", run_result.reject_count},
+            {"repair_count", run_result.repair_count},
+            {"short_term_only_count", run_result.short_term_only_count},
+            {"require_human_count", run_result.require_human_count},
+            {"dominant_decision", run_result.dominant_decision},
+            {"route", route},
+        }},
         {"status", build_status_payload()},
     };
 }
 
-json RagServerRuntime::build_clips_meta_payload(const std::string & query, int top_k, int timeout_ms) const {
+json RagServerRuntime::build_clips_meta_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const {
     const auto results = search_with_metadata(query, top_k, timeout_ms);
     const std::string retrieval_mode = params_base_.rag_hybrid_search ? "hybrid" : "dense";
+    const RagTraceContext trace = build_trace_context(body, "/rag/clips/meta", query, top_k);
     const RagClipsFactBundle bundle = BuildRagClipsFactBundle(query, results, retrieval_mode);
     const auto assertions = SerializeRagClipsFacts(bundle);
 
@@ -563,6 +739,10 @@ json RagServerRuntime::build_clips_meta_payload(const std::string & query, int t
     }
 
     return json{
+        {"request_id", trace.request_id},
+        {"trace_id", trace.trace_id},
+        {"query_id", trace.query_id},
+        {"request_context", build_trace_payload(trace, enabled(), params_base_.rag_clips_enable)},
         {"query", query},
         {"retrieval_mode", retrieval_mode},
         {"result_count", static_cast<int>(results.size())},
@@ -594,7 +774,8 @@ json RagServerRuntime::build_clips_manifest_payload() const {
     return BuildRagClipsManifestPayload(params_base_, empty_bundle, empty_assertions);
 }
 
-json RagServerRuntime::build_clips_run_payload(const std::string & query, int top_k, int timeout_ms) const {
+json RagServerRuntime::build_clips_run_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const {
+    const RagTraceContext trace = build_trace_context(body, "/rag/clips/run", query, top_k);
     try {
         LOG_INF("%s: building CLIPS run payload query='%s' top_k=%d timeout_ms=%d\n",
             __func__, query.c_str(), top_k, timeout_ms);
@@ -651,6 +832,10 @@ json RagServerRuntime::build_clips_run_payload(const std::string & query, int to
         LOG_INF("%s: assembling compact CLIPS run payload route='%s'\n", __func__, route.c_str());
 
         return json{
+            {"request_id", trace.request_id},
+            {"trace_id", trace.trace_id},
+            {"query_id", trace.query_id},
+            {"request_context", build_trace_payload(trace, enabled(), params_base_.rag_clips_enable)},
             {"query", query},
             {"retrieval_mode", retrieval_mode},
             {"result_count", static_cast<int>(results.size())},
@@ -719,6 +904,10 @@ json RagServerRuntime::build_clips_run_payload(const std::string & query, int to
     } catch (const std::exception & e) {
         LOG_ERR("%s: CLIPS run threw exception: %s\n", __func__, e.what());
         return json{
+            {"request_id", trace.request_id},
+            {"trace_id", trace.trace_id},
+            {"query_id", trace.query_id},
+            {"request_context", build_trace_payload(trace, enabled(), params_base_.rag_clips_enable)},
             {"query", query},
             {"retrieval_mode", params_base_.rag_hybrid_search ? "hybrid" : "dense"},
             {"result_count", 0},
@@ -782,6 +971,10 @@ json RagServerRuntime::build_clips_run_payload(const std::string & query, int to
     } catch (...) {
         LOG_ERR("%s: CLIPS run threw non-standard exception\n", __func__);
         return json{
+            {"request_id", trace.request_id},
+            {"trace_id", trace.trace_id},
+            {"query_id", trace.query_id},
+            {"request_context", build_trace_payload(trace, enabled(), params_base_.rag_clips_enable)},
             {"query", query},
             {"retrieval_mode", params_base_.rag_hybrid_search ? "hybrid" : "dense"},
             {"result_count", 0},
@@ -850,8 +1043,8 @@ bool RagServerRuntime::inject_chat_context(json & body, const std::string & quer
         return false;
     }
 
-    const auto results = search_with_metadata(query, top_k, timeout_ms);
-    const std::string context = build_rag_context_block(results);
+    const json payload = build_chat_context_payload(body, query, top_k, timeout_ms);
+    const std::string context = payload.value("context_block", "");
     if (context.empty()) {
         return false;
     }
@@ -865,6 +1058,11 @@ bool RagServerRuntime::inject_chat_context(json & body, const std::string & quer
         {"content", context},
     });
     body["rag"] = true;
+    body["rag_request_id"] = payload.value("request_id", "");
+    body["rag_trace_id"] = payload.value("trace_id", "");
+    body["rag_query_id"] = payload.value("query_id", "");
+    body["approved_context"] = payload.value("approved_context", json::array());
+    body["admission_summary"] = payload.value("admission_summary", json::object());
     return true;
 }
 

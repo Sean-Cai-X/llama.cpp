@@ -1,6 +1,52 @@
 #include "rag_integration_bridge.h"
 
+#include <atomic>
+#include <chrono>
 #include <vector>
+
+namespace {
+
+std::atomic<uint64_t> g_rag_bridge_trace_counter {0};
+
+std::string get_trace_string(const json & body, const char * key) {
+    if (!body.contains(key) || !body.at(key).is_string()) {
+        return "";
+    }
+    return body.at(key).get<std::string>();
+}
+
+std::string generate_bridge_trace_token(const char * prefix) {
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    const uint64_t now_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+    const uint64_t seq = ++g_rag_bridge_trace_counter;
+    return std::string(prefix) + "-" + std::to_string(now_ms) + "-" + std::to_string(seq);
+}
+
+json build_bridge_request_context(const json & body, const char * route, bool rag_enabled, bool clips_enabled) {
+    std::string request_id = get_trace_string(body, "request_id");
+    if (request_id.empty()) {
+        request_id = get_trace_string(body, "codex_request_id");
+    }
+    if (request_id.empty()) {
+        request_id = generate_bridge_trace_token("REQ");
+    }
+
+    std::string trace_id = get_trace_string(body, "trace_id");
+    if (trace_id.empty()) {
+        trace_id = request_id + ".trace";
+    }
+
+    return json{
+        {"request_id", request_id},
+        {"trace_id", trace_id},
+        {"route", route},
+        {"source_request_id", get_trace_string(body, "codex_request_id").empty() ? request_id : get_trace_string(body, "codex_request_id")},
+        {"rag_enabled", rag_enabled},
+        {"clips_enabled", clips_enabled},
+    };
+}
+
+} // namespace
 
 RagIntegrationBridge::RagIntegrationBridge(const common_params & params, RagServerRuntime * runtime)
     : params_(params), runtime_(runtime) {
@@ -47,11 +93,15 @@ RagBridgeResult RagIntegrationBridge::build_index_response(const json & body) co
 
     RagBridgeResult result;
     result.ok = true;
+    const json request_context = build_bridge_request_context(body, "/rag/index", true, params_.rag_clips_enable);
     result.payload = json{
+        {"request_id", request_context.value("request_id", "")},
+        {"trace_id", request_context.value("trace_id", "")},
         {"status", "queued"},
         {"kind", "index"},
         {"repo_path", repo_path},
         {"pending", runtime_->build_status_payload().value("pending", 0)},
+        {"request_context", request_context},
     };
     return result;
 }
@@ -78,11 +128,15 @@ RagBridgeResult RagIntegrationBridge::build_add_response(const json & body) cons
 
     RagBridgeResult result;
     result.ok = true;
+    const json request_context = build_bridge_request_context(body, "/rag/add", true, params_.rag_clips_enable);
     result.payload = json{
+        {"request_id", request_context.value("request_id", "")},
+        {"trace_id", request_context.value("trace_id", "")},
         {"status", "queued"},
         {"kind", "documents"},
         {"documents", (int) docs.size()},
         {"pending", runtime_->build_status_payload().value("pending", 0)},
+        {"request_context", request_context},
     };
     return result;
 }
@@ -99,7 +153,7 @@ RagBridgeResult RagIntegrationBridge::build_search_response(const json & body) c
 
     RagBridgeResult result;
     result.ok = true;
-    result.payload = runtime_->build_search_payload(query, resolve_top_k(body), params_.rag_search_timeout_ms);
+    result.payload = runtime_->build_search_payload(body, query, resolve_top_k(body), params_.rag_search_timeout_ms);
     return result;
 }
 
@@ -115,7 +169,7 @@ RagBridgeResult RagIntegrationBridge::build_explain_response(const json & body) 
 
     RagBridgeResult result;
     result.ok = true;
-    result.payload = runtime_->build_explain_payload(query, resolve_top_k(body), params_.rag_search_timeout_ms);
+    result.payload = runtime_->build_explain_payload(body, query, resolve_top_k(body), params_.rag_search_timeout_ms);
     return result;
 }
 
@@ -131,7 +185,7 @@ RagBridgeResult RagIntegrationBridge::build_chat_context_response(const json & b
 
     RagBridgeResult result;
     result.ok = true;
-    result.payload = runtime_->build_chat_context_payload(query, resolve_top_k(body), params_.rag_search_timeout_ms);
+    result.payload = runtime_->build_chat_context_payload(body, query, resolve_top_k(body), params_.rag_search_timeout_ms);
     return result;
 }
 
@@ -147,7 +201,7 @@ RagBridgeResult RagIntegrationBridge::build_clips_meta_response(const json & bod
 
     RagBridgeResult result;
     result.ok = true;
-    result.payload = runtime_->build_clips_meta_payload(query, resolve_top_k(body), params_.rag_search_timeout_ms);
+    result.payload = runtime_->build_clips_meta_payload(body, query, resolve_top_k(body), params_.rag_search_timeout_ms);
     return result;
 }
 
@@ -174,7 +228,7 @@ RagBridgeResult RagIntegrationBridge::build_clips_run_response(const json & body
 
     RagBridgeResult result;
     result.ok = true;
-    result.payload = runtime_->build_clips_run_payload(query, resolve_top_k(body), params_.rag_search_timeout_ms);
+    result.payload = runtime_->build_clips_run_payload(body, query, resolve_top_k(body), params_.rag_search_timeout_ms);
     return result;
 }
 

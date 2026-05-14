@@ -23,6 +23,8 @@ add_library(${TARGET} STATIC
         # PR-1: JSON utils + remote-session helpers
     server-json-utils.cpp
     server-json-utils.h
+    server-trace-registry.cpp
+    server-trace-registry.h
     server-remote-session-turn.cpp
     server-remote-session-turn.h
 
