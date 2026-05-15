@@ -1,4 +1,10 @@
 #include "server-tools.h"
+#include "server-clips-goal-router.h"
+#include "server-goal.h"
+#include "server-goal-executor.h"
+#include "server-supervision.h"
+#include "server-tool-envelope.h"
+#include "server-trace-registry.h"
 
 #include <sheredom/subprocess.h>
 
@@ -10,6 +16,8 @@
 #include <atomic>
 #include <cstring>
 #include <climits>
+#include <iterator>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -101,6 +109,51 @@ static run_proc_result run_process(
     return res;
 }
 
+static uint64_t fnv1a64_bytes(const std::string & text) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (unsigned char ch : text) {
+        hash ^= ch;
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+static std::vector<std::string> read_glob_patterns(
+        const json & params,
+        const char * single_key,
+        const char * list_key,
+        const std::vector<std::string> & fallback) {
+    if (params.contains(list_key) && params.at(list_key).is_array()) {
+        std::vector<std::string> patterns;
+        for (const auto & item : params.at(list_key)) {
+            if (item.is_string()) {
+                patterns.push_back(item.get<std::string>());
+            }
+        }
+        if (!patterns.empty()) {
+            return patterns;
+        }
+    }
+
+    if (params.contains(single_key) && params.at(single_key).is_string()) {
+        return {params.at(single_key).get<std::string>()};
+    }
+
+    return fallback;
+}
+
+static bool matches_any_glob(const std::vector<std::string> & patterns, const std::string & value) {
+    for (const auto & pattern : patterns) {
+        if (glob_match(pattern, value)) {
+            return true;
+        }
+        if (pattern.rfind("**/", 0) == 0 && glob_match(pattern.substr(3), value)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 json server_tool::to_json() {
     return {
         {"display_name", display_name},
@@ -172,6 +225,9 @@ struct server_tool_read_file : server_tool {
         std::string result;
         std::string line;
         int lineno = 0;
+        int lines_read = 0;
+        bool reached_eof = true;
+        bool output_truncated = false;
 
         while (std::getline(f, line)) {
             lineno++;
@@ -187,12 +243,97 @@ struct server_tool_read_file : server_tool {
 
             if (result.size() + out_line.size() > SERVER_TOOL_READ_FILE_MAX_SIZE) {
                 result += "[output truncated]";
+                output_truncated = true;
+                reached_eof = false;
                 break;
             }
             result += out_line;
+            lines_read++;
         }
 
-        return {{"plain_text_response", result}};
+        if (!output_truncated && end_line != -1 && lineno >= end_line) {
+            reached_eof = f.eof();
+        }
+
+        return {
+            {"path", path},
+            {"start_line", start_line},
+            {"end_line", end_line == -1 ? lineno : end_line},
+            {"append_loc", append_loc},
+            {"plain_text_response", result},
+            {"line_count_read", lines_read},
+            {"reached_eof", reached_eof},
+            {"output_truncated", output_truncated},
+        };
+    }
+};
+
+//
+// file_info: inspect a file and return lightweight metadata
+//
+
+struct server_tool_file_info : server_tool {
+    server_tool_file_info() {
+        name = "file_info";
+        display_name = "File info";
+        permission_write = false;
+    }
+
+    json get_definition() override {
+        return {
+            {"type", "function"},
+            {"function", {
+                {"name", name},
+                {"description", "Return file metadata such as size, line count, and a stable content hash."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"path", {{"type", "string"}, {"description", "Path to the file"}}},
+                    }},
+                    {"required", json::array({"path"})},
+                }},
+            }},
+        };
+    }
+
+    json invoke(json params) override {
+        const std::string path = params.at("path").get<std::string>();
+
+        std::error_code ec;
+        if (!fs::is_regular_file(path, ec) || ec) {
+            return {{"error", "path does not exist or is not a regular file: " + path}};
+        }
+
+        const uintmax_t size_bytes = fs::file_size(path, ec);
+        if (ec) {
+            return {{"error", "cannot stat file: " + ec.message()}};
+        }
+
+        std::ifstream f(path, std::ios::binary);
+        if (!f) {
+            return {{"error", "failed to open file: " + path}};
+        }
+
+        std::string contents((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        int line_count = 0;
+        for (char ch : contents) {
+            if (ch == '\n') {
+                line_count++;
+            }
+        }
+        if (!contents.empty() && contents.back() != '\n') {
+            line_count++;
+        }
+
+        std::ostringstream hash_stream;
+        hash_stream << std::hex << fnv1a64_bytes(contents);
+
+        return {
+            {"path", path},
+            {"size_bytes", static_cast<uint64_t>(size_bytes)},
+            {"line_count", line_count},
+            {"content_hash", "fnv1a64:" + hash_stream.str()},
+        };
     }
 };
 
@@ -218,9 +359,12 @@ struct server_tool_file_glob_search : server_tool {
                 {"parameters", {
                     {"type", "object"},
                     {"properties", {
-                        {"path",    {{"type", "string"}, {"description", "Base directory to search in"}}},
-                        {"include", {{"type", "string"}, {"description", "Glob pattern for files to include (e.g. \"**/*.cpp\"). Default: **"}}},
-                        {"exclude", {{"type", "string"}, {"description", "Glob pattern for files to exclude"}}},
+                        {"path",             {{"type", "string"}, {"description", "Base directory to search in"}}},
+                        {"include",          {{"type", "string"}, {"description", "Glob pattern for files to include (e.g. \"**/*.cpp\"). Default: **"}}},
+                        {"include_patterns", {{"type", "array"},  {"description", "Optional array of include glob patterns"}}},
+                        {"exclude",          {{"type", "string"}, {"description", "Glob pattern for files to exclude"}}},
+                        {"exclude_patterns", {{"type", "array"},  {"description", "Optional array of exclude glob patterns"}}},
+                        {"max_results",      {{"type", "integer"}, {"description", "Maximum number of results to return"}}},
                     }},
                     {"required", json::array({"path"})},
                 }},
@@ -230,11 +374,14 @@ struct server_tool_file_glob_search : server_tool {
 
     json invoke(json params) override {
         std::string base    = params.at("path").get<std::string>();
-        std::string include = json_value(params, "include", std::string("**"));
-        std::string exclude = json_value(params, "exclude", std::string(""));
+        const auto include_patterns = read_glob_patterns(params, "include", "include_patterns", {"**"});
+        const auto exclude_patterns = read_glob_patterns(params, "exclude", "exclude_patterns", {});
+        const size_t max_results = static_cast<size_t>(std::max(1, json_value(params, "max_results", static_cast<int>(SERVER_TOOL_FILE_SEARCH_MAX_RESULTS))));
 
         std::ostringstream output_text;
+        json matches = json::array();
         size_t count = 0;
+        size_t total_matches = 0;
 
         std::error_code ec;
         for (const auto & entry : fs::recursive_directory_iterator(base,
@@ -245,18 +392,31 @@ struct server_tool_file_glob_search : server_tool {
             if (ec) continue;
             std::replace(rel.begin(), rel.end(), '\\', '/');
 
-            if (!glob_match(include, rel)) continue;
-            if (!exclude.empty() && glob_match(exclude, rel)) continue;
+            if (!matches_any_glob(include_patterns, rel)) continue;
+            if (!exclude_patterns.empty() && matches_any_glob(exclude_patterns, rel)) continue;
 
-            output_text << entry.path().string() << "\n";
-            if (++count >= SERVER_TOOL_FILE_SEARCH_MAX_RESULTS) {
+            total_matches++;
+            if (count >= max_results) {
+                continue;
+            }
+
+            const std::string full_path = entry.path().string();
+            output_text << full_path << "\n";
+            matches.push_back(full_path);
+            if (++count >= max_results) {
                 break;
             }
         }
 
-        output_text << "\n---\nTotal matches: " << count << "\n";
+        output_text << "\n---\nTotal matches: " << total_matches << "\n";
 
-        return {{"plain_text_response", output_text.str()}};
+        return {
+            {"plain_text_response", output_text.str()},
+            {"matches", matches},
+            {"returned_count", count},
+            {"total_matches", total_matches},
+            {"path", base},
+        };
     }
 };
 
@@ -700,6 +860,7 @@ struct server_tool_apply_diff : server_tool {
 static std::vector<std::unique_ptr<server_tool>> build_tools() {
     std::vector<std::unique_ptr<server_tool>> tools;
     tools.push_back(std::make_unique<server_tool_read_file>());
+    tools.push_back(std::make_unique<server_tool_file_info>());
     tools.push_back(std::make_unique<server_tool_file_glob_search>());
     tools.push_back(std::make_unique<server_tool_grep_search>());
     tools.push_back(std::make_unique<server_tool_exec_shell_command>());
@@ -707,6 +868,92 @@ static std::vector<std::unique_ptr<server_tool>> build_tools() {
     tools.push_back(std::make_unique<server_tool_edit_file>());
     tools.push_back(std::make_unique<server_tool_apply_diff>());
     return tools;
+}
+
+static json build_single_tool_state_snapshot(
+        const server_tool_call_envelope & delivery,
+        const json & result) {
+    const bool success = !result.is_object() || !result.contains("error") || result.at("error").is_null();
+    return json{
+        {"goal_complete", success},
+        {"target_count", 1},
+        {"completed_count", success ? 1 : 0},
+        {"failed_count", success ? 0 : 1},
+        {"skipped_count", 0},
+        {"pending_count", 0},
+        {"next_actions", json::array()},
+        {"alarms", success ? json::array() : json::array({build_alarm_event(
+            "ERROR",
+            "TOOL_RESULT_NOT_VERIFIED",
+            "tool execution failed or returned an error payload")})},
+        {"failure_mode", success ? "" : "TOOL_RESULT_NOT_VERIFIED"},
+        {"goal_closed", true},
+        {"final_status_hint", success ? "COMPLETE" : "FAILED"},
+    };
+}
+
+static json build_single_tool_response(
+        const server_goal_envelope & goal,
+        const server_tool_call_envelope & delivery,
+        const json & result,
+        const server_goal_route_decision & pre,
+        const server_goal_route_decision & post,
+        const server_goal_route_decision & acceptance) {
+    const bool success = delivery.delivery_status == "SUCCESS";
+    const std::string final_status = !pre.allowed
+        ? "NEEDS_HUMAN_APPROVAL"
+        : (success && post.verified ? "COMPLETE" : "FAILED");
+    const std::string supervision_state = !pre.allowed
+        ? "NEEDS_HUMAN_APPROVAL"
+        : (success && post.verified ? "COMPLETE" : "FAILED");
+    const std::string execution_disposition = !pre.allowed || !post.verified
+        ? "RETURN_FAILURE_REPORT"
+        : "FINALIZE_ANSWER";
+    server_supervision_envelope supervision;
+    supervision.supervision_status = supervision_state;
+    supervision.execution_disposition = execution_disposition;
+    supervision.response_allowed = success && post.verified;
+    supervision.failure_mode = success && post.verified ? "" : (!pre.allowed ? pre.failure_mode : post.failure_mode);
+
+    const json alarms = !pre.allowed ? pre.alarms : post.alarms;
+    if (alarms.is_array()) {
+        for (const auto & alarm : alarms) {
+            if (!alarm.is_object()) {
+                continue;
+            }
+            supervision.alarm_code = alarm.value("alarm_code", alarm.value("reason", ""));
+            supervision.alarm_message = alarm.value("alarm_message", "");
+            if (!supervision.alarm_code.empty() || !supervision.alarm_message.empty()) {
+                break;
+            }
+        }
+    }
+
+    return json{
+        {"record_model", "tool_delivery_result_v2"},
+        {"status", final_status},
+        {"goal", to_json(goal)},
+        {"delivery", to_json(delivery)},
+        {"pre_guard", to_json(pre)},
+        {"post_guard", to_json(post)},
+        {"acceptance", {
+            {"goal_id", goal.goal_id},
+            {"acceptance_status", success && post.verified ? "COMPLETE" : "NOT_COMPLETE"},
+            {"final_status", final_status},
+            {"failure_mode", supervision.failure_mode},
+            {"supervision", to_json(supervision)},
+            {"supervision_state", supervision_state},
+            {"execution_disposition", execution_disposition},
+            {"assistant_response_allowed", success && post.verified},
+            {"alarm_code", supervision.alarm_code},
+            {"alarm_message", supervision.alarm_message},
+            {"progress", to_json(acceptance.progress)},
+            {"next_actions", acceptance.next_actions},
+            {"alarms", alarms},
+        }},
+        {"supervision", to_json(supervision)},
+        {"result", result},
+    };
 }
 
 void server_tools::setup(const std::vector<std::string> & enabled_tools) {
@@ -742,10 +989,127 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools) {
         auto res = std::make_unique<server_http_res>();
         try {
             json body = json::parse(req.body);
+            if (body.contains("goal_type") || (body.contains("goal") && body.at("goal").is_object())) {
+                server_goal_envelope goal = parse_server_goal_envelope(body);
+                server_goal_execution_controller controller(
+                    [this](const std::string & name, const json & params) {
+                        return invoke(name, params);
+                    },
+                    [this](const std::string & name) {
+                        return is_write_tool(name);
+                    });
+                json result = controller.execute_goal_until_closed(goal);
+                res->data = safe_json_to_str(result);
+                return res;
+            }
+
             std::string tool_name = body.at("tool").get<std::string>();
             json params = body.value("params", json::object());
-            json result = invoke(tool_name, params);
-            res->data   = safe_json_to_str(result);
+            const std::string trace_id = body.value("trace_id", std::string("trace-") + gen_tool_call_id());
+            const std::string request_id = body.value("request_id", std::string("req-") + gen_tool_call_id());
+            const std::string goal_id = body.value("goal_id", std::string("goal-tool-") + gen_tool_call_id());
+
+            server_goal_envelope goal;
+            goal.goal_id = goal_id;
+            goal.request_id = request_id;
+            goal.trace_id = trace_id;
+            goal.goal_type = "SINGLE_TOOL_CALL";
+            goal.status = "RUNNING";
+
+            server_tool_call_envelope delivery;
+            delivery.tool_call_id = body.value("tool_call_id", gen_tool_call_id());
+            delivery.goal_id = goal_id;
+            delivery.request_id = request_id;
+            delivery.trace_id = trace_id;
+            delivery.tool_name = tool_name;
+            delivery.params = params;
+            delivery.safety_class = is_write_tool(tool_name) ? "WRITE" : "READ_ONLY";
+
+            server_clips_goal_router router;
+            server_trace_registry::record_stage(trace_id, "tool_call_start", json{
+                {"goal_id", goal_id},
+                {"request_id", request_id},
+                {"trace_id", trace_id},
+                {"tool_call", to_json(delivery)},
+            });
+
+            const bool permission_write = is_write_tool(tool_name);
+            const server_goal_route_decision pre = router.pre_guard(goal, delivery, permission_write);
+            server_trace_registry::append_event(trace_id, "clips_pre_guard", json{
+                {"goal_id", goal_id},
+                {"request_id", request_id},
+                {"tool_call", to_json(delivery)},
+                {"decision", to_json(pre)},
+            });
+
+            json result;
+            server_goal_route_decision post;
+            if (!pre.allowed) {
+                result = json{
+                    {"error", pre.reason.empty() ? "tool call requires human approval" : pre.reason},
+                    {"supervision", {
+                        {"blocked", true},
+                        {"failure_mode", pre.failure_mode},
+                    }},
+                };
+                delivery.delivery_status = "BLOCKED";
+                post.decision_type = "POST_GUARD";
+                post.allowed = false;
+                post.verified = false;
+                post.failure_mode = pre.failure_mode;
+                post.reason = pre.reason;
+                post.alarms = pre.alarms;
+            } else {
+                result = invoke(tool_name, params);
+                delivery.delivery_status = result.contains("error") ? "FAILED" : "SUCCESS";
+                delivery.result_hash = build_server_result_hash(result);
+                server_trace_registry::append_event(trace_id, "mcp_tool_result", json{
+                    {"goal_id", goal_id},
+                    {"request_id", request_id},
+                    {"tool_call", to_json(delivery)},
+                    {"result", result},
+                });
+                post = router.post_guard(goal, delivery, result);
+            }
+
+            server_trace_registry::append_event(trace_id, "clips_post_guard", json{
+                {"goal_id", goal_id},
+                {"request_id", request_id},
+                {"tool_call", to_json(delivery)},
+                {"decision", to_json(post)},
+            });
+
+            const server_goal_route_decision acceptance = router.acceptance_check(
+                goal,
+                build_single_tool_state_snapshot(delivery, result));
+            server_trace_registry::append_event(trace_id, "acceptance_check", json{
+                {"goal_id", goal_id},
+                {"request_id", request_id},
+                {"decision", to_json(acceptance)},
+            });
+            server_trace_registry::record_stage(trace_id, "tool_call_final", json{
+                {"goal_id", goal_id},
+                {"request_id", request_id},
+                {"trace_id", trace_id},
+                {"tool_call", to_json(delivery)},
+                {"pre_guard", to_json(pre)},
+                {"post_guard", to_json(post)},
+                {"acceptance", to_json(acceptance)},
+                {"result", result},
+            });
+
+            if (body.value("return_goal_envelope", false)) {
+                json response = build_single_tool_response(goal, delivery, result, pre, post, acceptance);
+                res->data = safe_json_to_str(response);
+                return res;
+            }
+
+            if (!pre.allowed) {
+                res->status = 403;
+            } else if (result.contains("error")) {
+                res->status = 400;
+            }
+            res->data = safe_json_to_str(result);
         } catch (const json::exception & e) {
             res->status = 400;
             res->data   = safe_json_to_str(format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST));
@@ -765,4 +1129,13 @@ json server_tools::invoke(const std::string & name, const json & params) {
         }
     }
     return {{"error", "unknown tool: " + name}};
+}
+
+bool server_tools::is_write_tool(const std::string & name) const {
+    for (const auto & t : tools) {
+        if (t->name == name) {
+            return t->permission_write;
+        }
+    }
+    return true;
 }

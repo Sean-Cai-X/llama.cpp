@@ -13,6 +13,7 @@ struct RepoScannerFile {
 };
 
 struct RepoScannerChunk {
+    std::string slice_id;
     std::string relative_path;
     std::string language;
     int start_line = 0;

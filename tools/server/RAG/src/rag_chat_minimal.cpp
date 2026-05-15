@@ -2,46 +2,11 @@
 
 #include "rag_cxparser_bridge.h"
 #include "rag_explain.h"
+#include "rag_metadata.h"
 
 #include <sstream>
 
 namespace {
-
-json parse_rag_metadata(const std::string & metadata) {
-    json result = json::object();
-    if (metadata.empty()) {
-        return result;
-    }
-
-    std::stringstream stream(metadata);
-    std::string token;
-    while (std::getline(stream, token, ';')) {
-        const size_t sep = token.find('=');
-        if (sep == std::string::npos || sep == 0 || sep + 1 >= token.size()) {
-            continue;
-        }
-
-        const std::string key = token.substr(0, sep);
-        const std::string value = token.substr(sep + 1);
-        if (value.empty()) {
-            continue;
-        }
-
-        try {
-            size_t parsed = 0;
-            const long long numeric = std::stoll(value, &parsed);
-            if (parsed == value.size()) {
-                result[key] = numeric;
-                continue;
-            }
-        } catch (...) {
-        }
-
-        result[key] = value;
-    }
-
-    return result;
-}
 
 std::string sanitize_rag_preview(std::string text, size_t max_chars) {
     for (char & ch : text) {
@@ -57,7 +22,7 @@ std::string sanitize_rag_preview(std::string text, size_t max_chars) {
 }
 
 std::string format_rag_source_label(const json & metadata) {
-    const std::string path = metadata.value("path", "");
+    const std::string path = metadata.value("source_uri", metadata.value("path", ""));
     const bool has_start = metadata.contains("start_line");
     const bool has_end = metadata.contains("end_line");
 
@@ -78,7 +43,7 @@ std::string build_rag_context_block(const std::vector<RagSearchResult> & results
     constexpr size_t max_context_chars = 6000;
     std::string context = "Relevant context:\n";
     for (size_t i = 0; i < results.size(); ++i) {
-        const json metadata = parse_rag_metadata(results[i].metadata);
+        const json metadata = rag_parse_metadata(results[i].metadata);
         const std::string source = format_rag_source_label(metadata);
         std::string block = "[" + std::to_string(i + 1) + "]";
         if (!source.empty()) {
@@ -101,7 +66,7 @@ json build_recall_item(
     int rank,
     const std::string & retrieval_mode,
     const RagChatMinimalOptions & options) {
-    const json metadata = parse_rag_metadata(result.metadata);
+    const json metadata = rag_parse_metadata(result.metadata);
     const std::string preview = sanitize_rag_preview(result.chunk_text, options.max_preview_chars);
 
     json item = {

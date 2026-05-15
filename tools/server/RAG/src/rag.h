@@ -51,6 +51,8 @@ public:
 
     bool is_ready() const;
     size_t get_chunk_count() const;
+    size_t get_vector_map_count() const;
+    size_t get_raw_slice_count() const;
 
     static std::vector<std::string> split_text_by_words(
         const std::string & text,
@@ -82,7 +84,12 @@ private:
 
     std::vector<std::string> chunks_;
     std::vector<std::string> metadata_;
+    std::vector<std::string> vector_slice_ids_;
     std::unordered_map<std::string, std::string> file_hashes_;
+    std::unordered_map<std::string, std::string> raw_slice_text_;
+    std::unordered_map<std::string, std::string> raw_slice_metadata_;
+    std::unordered_map<std::string, std::string> raw_slice_hashes_;
+    std::unordered_map<std::string, int> slice_vector_ids_;
     std::unordered_set<std::string> chunk_hashes_;
 
     mutable std::timed_mutex mutex_;

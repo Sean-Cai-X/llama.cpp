@@ -9,9 +9,67 @@
 
 #include "server-common.h"
 
+#include <algorithm>
 #include <random>
 #include <sstream>
 #include <fstream>
+
+static std::string summarize_text_preview(const std::string & text, size_t max_chars = 160) {
+    std::string preview;
+    preview.reserve(std::min(text.size(), max_chars));
+    for (char ch : text) {
+        if (preview.size() >= max_chars) {
+            break;
+        }
+        if (ch == '\r' || ch == '\n' || ch == '\t') {
+            preview.push_back(' ');
+        } else {
+            preview.push_back(ch);
+        }
+    }
+    if (text.size() > max_chars) {
+        preview += "...";
+    }
+    return preview;
+}
+
+static std::string summarize_json_content_preview(const json & content, size_t max_chars = 160) {
+    if (content.is_string()) {
+        return summarize_text_preview(content.get<std::string>(), max_chars);
+    }
+    if (content.is_null()) {
+        return "<null>";
+    }
+    if (content.is_array()) {
+        std::ostringstream oss;
+        size_t appended = 0;
+        for (const auto & part : content) {
+            if (appended >= max_chars) {
+                break;
+            }
+            const std::string type = json_value(part, "type", std::string("unknown"));
+            if (type == "text") {
+                const std::string text = json_value(part, "text", std::string());
+                if (!text.empty()) {
+                    if (oss.tellp() > 0) {
+                        oss << " | ";
+                    }
+                    oss << "text:" << summarize_text_preview(text, max_chars - appended);
+                    appended = static_cast<size_t>(oss.tellp());
+                }
+            } else {
+                if (oss.tellp() > 0) {
+                    oss << " | ";
+                }
+                oss << type;
+                appended = static_cast<size_t>(oss.tellp());
+            }
+        }
+        const std::string preview = oss.str();
+        return preview.empty() ? "<array>" : preview;
+    }
+    return summarize_text_preview(content.dump(), max_chars);
+}
 
 json format_error_response(const std::string & message, const enum error_type type) {
     std::string type_str;
@@ -1070,6 +1128,25 @@ json oaicompat_chat_params_parse(
     bool prefill_assistant_message = !inputs.messages.empty() && inputs.messages.back().role == "assistant" && opt.prefill_assistant;
     common_chat_msg last_message;
     if (prefill_assistant_message) {
+        const json trailing_message = !messages.empty() ? messages.back() : json::object();
+        const std::string trailing_role = json_value(trailing_message, "role", std::string());
+        const std::string trailing_content_preview = summarize_json_content_preview(
+            json_value(trailing_message, "content", json()));
+        const size_t trailing_tool_call_count = trailing_message.contains("tool_calls") && trailing_message.at("tool_calls").is_array()
+            ? trailing_message.at("tool_calls").size()
+            : 0;
+
+        SRV_INF("%s: detected assistant response prefill candidate: messages=%zu, effective_enable_thinking=%d, opt.prefill_assistant=%d, add_generation_prompt=%d, reasoning_format=%d, trailing_role='%s', trailing_tool_calls=%zu, trailing_content_preview='%s'\n",
+            __func__,
+            messages.size(),
+            inputs.enable_thinking,
+            opt.prefill_assistant,
+            inputs.add_generation_prompt,
+            static_cast<int>(inputs.reasoning_format),
+            trailing_role.c_str(),
+            trailing_tool_call_count,
+            trailing_content_preview.c_str());
+
         last_message = inputs.messages.back();
         inputs.messages.pop_back();
 
@@ -1082,7 +1159,15 @@ json oaicompat_chat_params_parse(
         inputs.reasoning_format = COMMON_REASONING_FORMAT_NONE;
 
         if ( inputs.enable_thinking ) {
-            throw std::invalid_argument("Assistant response prefill is incompatible with enable_thinking.");
+            SRV_WRN("%s: disabling assistant response prefill thinking mode conflict: messages=%zu, chat_template_kwargs.enable_thinking='%s', opt.prefill_assistant=%d, trailing_role='%s', trailing_tool_calls=%zu, trailing_content_preview='%s'\n",
+                __func__,
+                messages.size(),
+                enable_thinking_kwarg.c_str(),
+                opt.prefill_assistant,
+                trailing_role.c_str(),
+                trailing_tool_call_count,
+                trailing_content_preview.c_str());
+            inputs.enable_thinking = false;
         }
 
         inputs.add_generation_prompt = true;

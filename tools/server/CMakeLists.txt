@@ -19,6 +19,18 @@ add_library(${TARGET} STATIC
     server-remote-session.h
     server-tools.cpp
     server-tools.h
+    server-goal.cpp
+    server-goal.h
+    server-supervision.cpp
+    server-supervision.h
+    server-tool-envelope.cpp
+    server-tool-envelope.h
+    server-audit-event.cpp
+    server-audit-event.h
+    server-clips-goal-router.cpp
+    server-clips-goal-router.h
+    server-goal-executor.cpp
+    server-goal-executor.h
 
         # PR-1: JSON utils + remote-session helpers
     server-json-utils.cpp

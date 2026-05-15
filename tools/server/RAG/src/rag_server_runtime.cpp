@@ -1,7 +1,9 @@
 #include "rag_server_runtime.h"
 
 #include "log.h"
+#include "rag_metadata.h"
 #include "repo_scanner.h"
+#include "server-trace-registry.h"
 
 #include <nlohmann/json.hpp>
 
@@ -25,29 +27,6 @@ std::string trim_copy(std::string value) {
     return value;
 }
 
-json parse_rag_metadata(const std::string & metadata) {
-    json out = json::object();
-    if (metadata.empty()) {
-        return out;
-    }
-
-    std::stringstream stream(metadata);
-    std::string part;
-    while (std::getline(stream, part, ';')) {
-        const size_t pos = part.find('=');
-        if (pos == std::string::npos) {
-            continue;
-        }
-        const std::string key = trim_copy(part.substr(0, pos));
-        const std::string value = trim_copy(part.substr(pos + 1));
-        if (!key.empty()) {
-            out[key] = value;
-        }
-    }
-
-    return out;
-}
-
 std::string sanitize_rag_preview(std::string text, size_t max_chars = 240) {
     text = trim_copy(text);
     for (char & ch : text) {
@@ -63,9 +42,9 @@ std::string sanitize_rag_preview(std::string text, size_t max_chars = 240) {
 }
 
 std::string format_rag_source_label(const json & metadata) {
-    const std::string path = metadata.value("path", "");
-    const std::string lines_begin = metadata.value("start_line", "");
-    const std::string lines_end = metadata.value("end_line", "");
+    const std::string path = metadata.value("source_uri", metadata.value("path", ""));
+    const std::string lines_begin = rag_metadata_value_string(metadata, "start_line");
+    const std::string lines_end = rag_metadata_value_string(metadata, "end_line");
     if (!path.empty() && !lines_begin.empty() && !lines_end.empty()) {
         return path + ":" + lines_begin + "-" + lines_end;
     }
@@ -141,10 +120,10 @@ std::string build_approved_context_block(const json & approved_context) {
 
 json build_source_info(const json & metadata) {
     return json{
-        {"path", metadata.value("path", "")},
+        {"path", metadata.value("source_uri", metadata.value("path", ""))},
         {"language", metadata.value("language", "")},
-        {"start_line", metadata.value("start_line", "")},
-        {"end_line", metadata.value("end_line", "")},
+        {"start_line", rag_metadata_value_int(metadata, "start_line", 0)},
+        {"end_line", rag_metadata_value_int(metadata, "end_line", 0)},
     };
 }
 
@@ -215,7 +194,7 @@ json build_approved_context_items(
 
         const RagMetaSliceLink & link = *link_it->second;
         const RagSearchResult & result = results[result_it->second];
-        const json metadata = parse_rag_metadata(result.metadata);
+        const json metadata = rag_parse_metadata(result.metadata);
         approved.push_back(json{
             {"context_id", "CTX-" + decision.slice_id},
             {"request_id", trace.request_id},
@@ -335,6 +314,8 @@ bool RagServerRuntime::init(common_params & params, llama_model * model, llama_c
         return false;
     }
 
+    server_trace_registry::configure_storage(params_base_.rag_index_path);
+
     start_worker();
     params = params_base_;
     return true;
@@ -411,6 +392,9 @@ void RagServerRuntime::worker_loop() {
                     rag_engine_->clear();
                 }
                 rag_engine_->add_documents(job.docs, job.metadata);
+                // Persist ingest results immediately so sidecar stores are available
+                // to status checks and external inspection without waiting for shutdown.
+                rag_engine_->save();
             }
 
             {
@@ -534,7 +518,7 @@ json RagServerRuntime::build_search_payload(const json & body, const std::string
     json items = json::array();
 
     for (size_t i = 0; i < results.size(); ++i) {
-        const json metadata = parse_rag_metadata(results[i].metadata);
+        const json metadata = rag_parse_metadata(results[i].metadata);
         items.push_back(json{
             {"rank", (int) i + 1},
             {"score", results[i].score},
@@ -564,7 +548,7 @@ json RagServerRuntime::build_explain_payload(const json & body, const std::strin
     json evidence = json::array();
 
     for (size_t i = 0; i < results.size(); ++i) {
-        const json metadata = parse_rag_metadata(results[i].metadata);
+        const json metadata = rag_parse_metadata(results[i].metadata);
         evidence.push_back(json{
             {"rank", (int) i + 1},
             {"score", results[i].score},
@@ -1078,8 +1062,12 @@ json RagServerRuntime::build_status_payload() const {
     }
 
     int chunk_count = 0;
+    int vector_map_count = 0;
+    int raw_slice_count = 0;
     if (rag_engine_) {
         chunk_count = (int) rag_engine_->get_chunk_count();
+        vector_map_count = (int) rag_engine_->get_vector_map_count();
+        raw_slice_count = (int) rag_engine_->get_raw_slice_count();
     }
 
     return json{
@@ -1092,6 +1080,8 @@ json RagServerRuntime::build_status_payload() const {
         {"docs_completed", docs_completed_.load()},
         {"metadata_completed", metadata_completed_.load()},
         {"chunk_count", chunk_count},
+        {"vector_map_count", vector_map_count},
+        {"raw_slice_count", raw_slice_count},
         {"last_job_kind", last_job_kind},
         {"last_reset_before_add", last_reset_before_add},
         {"last_error", last_error},

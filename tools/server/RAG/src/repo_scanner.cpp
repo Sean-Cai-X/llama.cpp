@@ -1,4 +1,5 @@
 #include "repo_scanner.h"
+#include "rag_metadata.h"
 
 #include <algorithm>
 #include <cctype>
@@ -223,17 +224,6 @@ std::string strip_html(const std::string & input) {
     return normalized;
 }
 
-std::string build_metadata(
-    const std::string & relative_path,
-    const std::string & language,
-    size_t file_size) {
-    std::ostringstream out;
-    out << "path=" << relative_path
-        << ";language=" << language
-        << ";file_size=" << file_size;
-    return out.str();
-}
-
 std::vector<std::string> split_lines(const std::string & text) {
     std::vector<std::string> lines;
     std::stringstream stream(text);
@@ -279,14 +269,17 @@ std::vector<RepoScannerChunk> build_chunks(
         chunk.start_line = (int) begin + 1;
         chunk.end_line = (int) end;
         chunk.text = chunk_text;
-
-        std::ostringstream meta;
-        meta << file.metadata
-             << ";start_line=" << chunk.start_line
-             << ";end_line=" << chunk.end_line
-             << ";chunk_id=" << file.relative_path << ":" << chunk.start_line << "-" << chunk.end_line
-             << ";prechunked=1";
-        chunk.metadata = meta.str();
+        const int chunk_index = static_cast<int>(chunks.size());
+        const int chunk_count = static_cast<int>((lines.size() + step - 1) / step);
+        const rag_json chunk_metadata = rag_build_chunk_metadata(
+            rag_parse_metadata(file.metadata),
+            chunk.start_line,
+            chunk.end_line,
+            chunk_index,
+            chunk_count,
+            chunk.text);
+        chunk.slice_id = rag_metadata_value_string(chunk_metadata, "slice_id");
+        chunk.metadata = rag_metadata_to_string(chunk_metadata);
 
         chunks.push_back(std::move(chunk));
         if (end >= lines.size()) {
@@ -352,7 +345,7 @@ RepoScannerResult RepoScanner::scan(const std::string & repo_path) {
         file.language = language;
         file.file_size = text.size();
         file.text = text;
-        file.metadata = build_metadata(relative_path, language, file.file_size);
+        file.metadata = rag_metadata_to_string(rag_build_file_metadata(relative_path, language, file.file_size));
 
         result.scanned_files++;
         auto chunks = build_chunks(file);

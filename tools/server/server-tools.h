@@ -20,6 +20,7 @@ struct server_tools {
 
     void setup(const std::vector<std::string> & enabled_tools);
     json invoke(const std::string & name, const json & params);
+    bool is_write_tool(const std::string & name) const;
 
     server_http_context::handler_t handle_get;
     server_http_context::handler_t handle_post;

@@ -59,6 +59,13 @@ std::unique_ptr<server_res_generator> handle_index(
     const RagBridgeResult result =
         rag_bridge.build_index_response(json::parse(req.body));
 
+    if (result.ok) {
+        server_trace_registry::record_stage(
+            result.payload.value("trace_id", ""),
+            "rag_index",
+            result.payload);
+    }
+
     return finish_rag_response(std::move(res), result);
 }
 
@@ -86,6 +93,13 @@ std::unique_ptr<server_res_generator> handle_add(
     const RagBridgeResult result =
         rag_bridge.build_add_response(json::parse(req.body));
 
+    if (result.ok) {
+        server_trace_registry::record_stage(
+            result.payload.value("trace_id", ""),
+            "rag_add",
+            result.payload);
+    }
+
     return finish_rag_response(std::move(res), result);
 }
 
@@ -100,6 +114,13 @@ std::unique_ptr<server_res_generator> handle_search(
     const RagBridgeResult result =
         rag_bridge.build_search_response(json::parse(req.body));
 
+    if (result.ok) {
+        server_trace_registry::record_stage(
+            result.payload.value("trace_id", ""),
+            "rag_search",
+            result.payload);
+    }
+
     return finish_rag_response(std::move(res), result);
 }
 
@@ -113,6 +134,13 @@ std::unique_ptr<server_res_generator> handle_explain(
     RagIntegrationBridge rag_bridge(params, rag_runtime);
     const RagBridgeResult result =
         rag_bridge.build_explain_response(json::parse(req.body));
+
+    if (result.ok) {
+        server_trace_registry::record_stage(
+            result.payload.value("trace_id", ""),
+            "rag_explain",
+            result.payload);
+    }
 
     return finish_rag_response(std::move(res), result);
 }

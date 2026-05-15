@@ -1,4 +1,5 @@
 #include "rag_clips_meta.h"
+#include "rag_metadata.h"
 
 #include <algorithm>
 #include <cctype>
@@ -21,22 +22,6 @@ std::string EscapeClipsString(const std::string & value) {
         }
     }
     return escaped;
-}
-
-std::string MakeStableId(const std::string & prefix, const std::string & seed) {
-    return prefix + "-" + std::to_string(std::hash<std::string>{}(seed));
-}
-
-std::string ExtractMetadataValue(const std::string & metadata, const std::string & key) {
-    const std::string needle = key + "=";
-    const size_t begin = metadata.find(needle);
-    if (begin == std::string::npos) {
-        return "";
-    }
-
-    const size_t value_begin = begin + needle.size();
-    const size_t value_end = metadata.find(';', value_begin);
-    return metadata.substr(value_begin, value_end == std::string::npos ? std::string::npos : value_end - value_begin);
 }
 
 std::string GuessNodeType(const std::string & retrieval_mode) {
@@ -81,19 +66,6 @@ std::string classify_body_quality(const std::string & text) {
     return "clean";
 }
 
-bool parse_metadata_flag(const std::string & metadata, const std::string & key) {
-    const std::string value = ExtractMetadataValue(metadata, key);
-    if (value.empty()) {
-        return false;
-    }
-
-    std::string lowered = value;
-    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return lowered == "1" || lowered == "true" || lowered == "yes" || lowered == "on";
-}
-
 void AppendEdge(
     RagMetaGraph & graph,
     const std::string & edge_type,
@@ -101,7 +73,7 @@ void AppendEdge(
     const std::string & to_node_id,
     const std::string & relation) {
     RagMetaGraphEdge edge;
-    edge.edge_id = MakeStableId("EDGE", edge_type + "|" + from_node_id + "|" + to_node_id + "|" + relation);
+    edge.edge_id = rag_make_stable_id("EDGE", edge_type + "|" + from_node_id + "|" + to_node_id + "|" + relation);
     edge.edge_type = edge_type;
     edge.from_node_id = from_node_id;
     edge.to_node_id = to_node_id;
@@ -131,7 +103,7 @@ RagClipsFactBundle BuildRagClipsFactBundle(
         0,
     });
 
-    const std::string domain_id = MakeStableId("GRAPH-DOMAIN", retrieval_mode.empty() ? "runtime" : retrieval_mode);
+    const std::string domain_id = rag_make_stable_id("GRAPH-DOMAIN", retrieval_mode.empty() ? "runtime" : retrieval_mode);
     graph.nodes.push_back({
         domain_id,
         "domain",
@@ -151,13 +123,14 @@ RagClipsFactBundle BuildRagClipsFactBundle(
     bundle.inference_rules.push_back(rule);
 
     for (size_t i = 0; i < results.size(); ++i) {
-        const std::string source_path = ExtractMetadataValue(results[i].metadata, "path");
-        const std::string source_language = ExtractMetadataValue(results[i].metadata, "language");
-        const std::string source_start = ExtractMetadataValue(results[i].metadata, "start_line");
-        const std::string source_end = ExtractMetadataValue(results[i].metadata, "end_line");
+        const rag_json metadata = rag_parse_metadata(results[i].metadata);
+        const std::string source_path = rag_metadata_value_string(metadata, "source_uri");
+        const std::string source_language = rag_metadata_value_string(metadata, "language");
+        const std::string source_start = rag_metadata_value_string(metadata, "start_line");
+        const std::string source_end = rag_metadata_value_string(metadata, "end_line");
 
         RagMetaNode node;
-        node.node_id = MakeStableId("NODE", query + "|" + source_path + "|" + std::to_string(i));
+        node.node_id = rag_make_stable_id("NODE", query + "|" + source_path + "|" + std::to_string(i));
         node.parent_id = "META-ROOT";
         node.anchor_level = 3;
         node.is_immutable = false;
@@ -169,7 +142,7 @@ RagClipsFactBundle BuildRagClipsFactBundle(
         bundle.nodes.push_back(node);
 
         const std::string file_ref = source_path.empty() ? ("runtime:retrieved-file-" + std::to_string(i + 1)) : source_path;
-        const std::string file_node_id = MakeStableId("GRAPH-FILE", file_ref);
+        const std::string file_node_id = rag_make_stable_id("GRAPH-FILE", file_ref);
         const auto file_it = std::find_if(
             graph.nodes.begin(),
             graph.nodes.end(),
@@ -186,7 +159,7 @@ RagClipsFactBundle BuildRagClipsFactBundle(
             AppendEdge(graph, "contains", domain_id, file_node_id, "file");
         }
 
-        const std::string concept_graph_id = MakeStableId("GRAPH-CONCEPT", node.node_id);
+        const std::string concept_graph_id = rag_make_stable_id("GRAPH-CONCEPT", node.node_id);
         graph.nodes.push_back({
             concept_graph_id,
             "concept",
@@ -198,32 +171,35 @@ RagClipsFactBundle BuildRagClipsFactBundle(
         AppendEdge(graph, "describes", file_node_id, concept_graph_id, "concept");
 
         RagMetaSliceLink link;
-        link.link_id = MakeStableId("LINK", node.node_id);
-        link.slice_id = MakeStableId("SLICE", source_path + "|" + source_start + "|" + source_end);
+        link.link_id = rag_make_stable_id("LINK", node.node_id);
+        link.slice_id = rag_metadata_value_string(metadata, "slice_id");
+        if (link.slice_id.empty()) {
+            link.slice_id = rag_make_stable_id("SLICE", source_path + "|" + source_start + "|" + source_end + "|" + results[i].chunk_text);
+        }
         link.bind_node_id = node.node_id;
         link.info_weight = std::max(0.0f, std::min(1.0f, results[i].score));
         link.truth_status = "TRUE";
         link.is_reversible = true;
         link.similarity_to_core = std::max(0.0f, std::min(1.0f, results[i].score));
         link.slice_text = results[i].chunk_text;
-        link.embedding_hash = MakeStableId("EMBD", results[i].chunk_text);
-        link.dedup_hash = MakeStableId("DEDUP", results[i].chunk_text);
+        link.embedding_hash = rag_make_stable_id("EMBD", results[i].chunk_text);
+        link.dedup_hash = rag_make_stable_id("DEDUP", results[i].chunk_text);
         link.source_type = source_language.empty() ? "retrieved" : source_language;
         link.provider_id = "rag-main-thread";
         link.evidence_ref = source_path.empty() ? "runtime:retrieved-context" : source_path;
         link.body_quality = classify_body_quality(results[i].chunk_text);
-        link.projection_incomplete = parse_metadata_flag(results[i].metadata, "projection_incomplete");
-        link.vector_skip_reason = ExtractMetadataValue(results[i].metadata, "vector_skip_reason");
+        link.projection_incomplete = rag_metadata_value_bool(metadata, "projection_incomplete", false);
+        link.vector_skip_reason = rag_metadata_value_string(metadata, "vector_skip_reason");
         link.browser_visible_summary =
-            parse_metadata_flag(results[i].metadata, "browser_visible_summary") ||
-            parse_metadata_flag(results[i].metadata, "browser_visible_summary_turn");
+            rag_metadata_value_bool(metadata, "browser_visible_summary", false) ||
+            rag_metadata_value_bool(metadata, "browser_visible_summary_turn", false);
         bundle.slice_links.push_back(link);
 
         const std::string slice_label =
             (source_start.empty() || source_end.empty())
                 ? ("slice-" + std::to_string(i + 1))
                 : ("slice:" + source_start + "-" + source_end);
-        const std::string slice_graph_id = MakeStableId("GRAPH-SLICE", link.slice_id);
+        const std::string slice_graph_id = rag_make_stable_id("GRAPH-SLICE", link.slice_id);
         graph.nodes.push_back({
             slice_graph_id,
             "slice",
@@ -236,7 +212,7 @@ RagClipsFactBundle BuildRagClipsFactBundle(
     }
 
     for (const auto & rule_item : bundle.inference_rules) {
-        const std::string rule_graph_id = MakeStableId("GRAPH-RULE", rule_item.rule_id);
+        const std::string rule_graph_id = rag_make_stable_id("GRAPH-RULE", rule_item.rule_id);
         graph.nodes.push_back({
             rule_graph_id,
             "inference_rule",

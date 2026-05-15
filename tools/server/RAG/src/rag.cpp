@@ -1,4 +1,5 @@
 #include "rag.h"
+#include "rag_metadata.h"
 
 #include "faiss/IndexFlat.h"
 #include "faiss/index_io.h"
@@ -16,30 +17,6 @@
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
-
-namespace {
-
-bool metadata_contains_flag(const std::string & metadata, const std::string & flag) {
-    if (metadata.empty() || flag.empty()) {
-        return false;
-    }
-
-    if (metadata == flag) {
-        return true;
-    }
-
-    if (metadata.find(flag + ";") == 0) {
-        return true;
-    }
-
-    if (metadata.rfind(";" + flag) != std::string::npos) {
-        return true;
-    }
-
-    return false;
-}
-
-} // namespace
 
 RagEngine::RagEngine(const RagConfig & config)
     : config_(config),
@@ -117,12 +94,27 @@ size_t RagEngine::get_chunk_count() const {
     return chunks_.size();
 }
 
+size_t RagEngine::get_vector_map_count() const {
+    std::lock_guard<std::timed_mutex> lock(mutex_);
+    return slice_vector_ids_.size();
+}
+
+size_t RagEngine::get_raw_slice_count() const {
+    std::lock_guard<std::timed_mutex> lock(mutex_);
+    return raw_slice_text_.size();
+}
+
 void RagEngine::clear() {
     std::lock_guard<std::timed_mutex> lock(mutex_);
 
     chunks_.clear();
     metadata_.clear();
+    vector_slice_ids_.clear();
     file_hashes_.clear();
+    raw_slice_text_.clear();
+    raw_slice_metadata_.clear();
+    raw_slice_hashes_.clear();
+    slice_vector_ids_.clear();
     chunk_hashes_.clear();
     test_vectors_.clear();
     bm25_index_.clear();
@@ -314,7 +306,7 @@ void RagEngine::add_documents(const std::vector<std::string> & docs, const std::
 
     for (size_t doc_idx = 0; doc_idx < docs.size(); ++doc_idx) {
         const auto & doc = docs[doc_idx];
-        const bool is_prechunked = doc_idx < metadata.size() && metadata_contains_flag(metadata[doc_idx], "prechunked=1");
+        const bool is_prechunked = doc_idx < metadata.size() && rag_metadata_contains_flag(metadata[doc_idx], "prechunked");
         auto split_chunks = is_prechunked ? std::vector<std::string> { doc } : split_text_smart(doc);
         const size_t chunk_count = split_chunks.size();
 
@@ -335,24 +327,44 @@ void RagEngine::add_documents(const std::vector<std::string> & docs, const std::
             } else {
                 test_vectors_.push_back(vec);
             }
-            chunks_.push_back(chunk);
-            bm25_index_.add_document((int) chunks_.size() - 1, chunk);
-
+            rag_json stored_metadata;
             if (doc_idx < metadata.size()) {
-                std::ostringstream meta_stream;
-                meta_stream << metadata[doc_idx]
-                            << ";chunk_index=" << chunk_idx
-                            << ";chunk_count=" << chunk_count;
-                metadata_.push_back(meta_stream.str());
+                stored_metadata = rag_normalize_ingest_metadata(
+                    metadata[doc_idx],
+                    chunk,
+                    static_cast<int>(doc_idx),
+                    static_cast<int>(chunk_idx),
+                    static_cast<int>(chunk_count));
             } else {
                 json meta = {
                     {"type", "document"},
                     {"source_doc", (int) doc_idx},
-                    {"chunk_id", (int) chunks_.size() - 1},
+                    {"schema_version", 1},
                     {"chunk_index", (int) chunk_idx},
                     {"chunk_count", (int) chunk_count},
                 };
-                metadata_.push_back(meta.dump());
+                stored_metadata = rag_normalize_ingest_metadata(
+                    meta.dump(),
+                    chunk,
+                    static_cast<int>(doc_idx),
+                    static_cast<int>(chunk_idx),
+                    static_cast<int>(chunk_count));
+                stored_metadata["type"] = "document";
+                stored_metadata["source_doc"] = (int) doc_idx;
+            }
+
+            chunks_.push_back(chunk);
+            metadata_.push_back(rag_metadata_to_string(stored_metadata));
+
+            const int vector_id = static_cast<int>(chunks_.size()) - 1;
+            const std::string slice_id = rag_metadata_value_string(stored_metadata, "slice_id");
+            bm25_index_.add_document(vector_id, chunk);
+            vector_slice_ids_.push_back(slice_id);
+            if (!slice_id.empty()) {
+                slice_vector_ids_[slice_id] = vector_id;
+                raw_slice_text_[slice_id] = chunk;
+                raw_slice_metadata_[slice_id] = rag_metadata_to_string(stored_metadata);
+                raw_slice_hashes_[slice_id] = rag_metadata_value_string(stored_metadata, "text_hash");
             }
         }
 
@@ -506,6 +518,58 @@ void RagEngine::save() {
             out << json(metadata_).dump();
         }
         {
+            json vector_map;
+            vector_map["schema_version"] = 1;
+            vector_map["index_name"] = config_.index_path;
+            vector_map["store_model"] = "rag_vector_slice_map_v1";
+            vector_map["vector_to_slice"] = json::object();
+            vector_map["slice_to_vector"] = json::object();
+            for (size_t i = 0; i < vector_slice_ids_.size(); ++i) {
+                const std::string & slice_id = vector_slice_ids_[i];
+                if (slice_id.empty()) {
+                    continue;
+                }
+                vector_map["vector_to_slice"][std::to_string(i)] = slice_id;
+            }
+            for (const auto & item : slice_vector_ids_) {
+                vector_map["slice_to_vector"][item.first] = item.second;
+            }
+            std::ofstream out(config_.index_path + ".vectors.json", std::ios::binary);
+            out << vector_map.dump();
+        }
+        {
+            json raw_store;
+            raw_store["schema_version"] = 1;
+            raw_store["store_model"] = "rag_raw_slice_store_v1";
+            raw_store["index_name"] = config_.index_path;
+            raw_store["slices"] = json::object();
+            raw_store["records"] = json::object();
+
+            for (const auto & item : raw_slice_text_) {
+                const std::string & slice_id = item.first;
+                const std::string & raw_text = item.second;
+                const rag_json metadata = rag_parse_metadata(raw_slice_metadata_[slice_id]);
+                const json metadata_json = json::parse(rag_metadata_to_string(metadata));
+                const std::string text_hash = raw_slice_hashes_[slice_id];
+                const int vector_id = slice_vector_ids_.count(slice_id) ? slice_vector_ids_[slice_id] : -1;
+
+                raw_store["slices"][slice_id] = json{
+                    {"slice_id", slice_id},
+                    {"raw", raw_text},
+                    {"meta", metadata_json},
+                    {"hash", text_hash},
+                    {"vector_id", vector_id},
+                };
+
+                raw_store["records"]["slice:" + slice_id + ":raw"] = raw_text;
+                raw_store["records"]["slice:" + slice_id + ":meta"] = metadata_json;
+                raw_store["records"]["slice:" + slice_id + ":hash"] = text_hash;
+            }
+
+            std::ofstream out(config_.index_path + ".raw_slices.json", std::ios::binary);
+            out << raw_store.dump();
+        }
+        {
             json hashes;
             hashes["file_hashes"] = file_hashes_;
             hashes["chunk_hashes"] = std::vector<std::string>(chunk_hashes_.begin(), chunk_hashes_.end());
@@ -545,6 +609,91 @@ bool RagEngine::load() {
                 json j;
                 in >> j;
                 metadata_ = j.get<std::vector<std::string>>();
+            }
+        }
+        {
+            vector_slice_ids_.clear();
+            slice_vector_ids_.clear();
+
+            std::ifstream in(config_.index_path + ".vectors.json", std::ios::binary);
+            if (in.is_open()) {
+                json j;
+                in >> j;
+                const json vector_to_slice = j.value("vector_to_slice", json::object());
+                vector_slice_ids_.resize(chunks_.size());
+                for (auto it = vector_to_slice.begin(); it != vector_to_slice.end(); ++it) {
+                    try {
+                        const size_t vector_id = static_cast<size_t>(std::stoull(it.key()));
+                        if (vector_id < vector_slice_ids_.size() && it.value().is_string()) {
+                            vector_slice_ids_[vector_id] = it.value().get<std::string>();
+                        }
+                    } catch (...) {
+                    }
+                }
+
+                const json slice_to_vector = j.value("slice_to_vector", json::object());
+                for (auto it = slice_to_vector.begin(); it != slice_to_vector.end(); ++it) {
+                    if (it.value().is_number_integer()) {
+                        slice_vector_ids_[it.key()] = it.value().get<int>();
+                    }
+                }
+            }
+
+            if (vector_slice_ids_.size() < metadata_.size()) {
+                vector_slice_ids_.resize(metadata_.size());
+            }
+            if (!metadata_.empty()) {
+                for (size_t i = 0; i < metadata_.size(); ++i) {
+                    if (i < vector_slice_ids_.size() && !vector_slice_ids_[i].empty()) {
+                        continue;
+                    }
+                    const rag_json metadata = rag_parse_metadata(metadata_[i]);
+                    const std::string slice_id = rag_metadata_value_string(metadata, "slice_id");
+                    vector_slice_ids_[i] = slice_id;
+                    if (!slice_id.empty()) {
+                        slice_vector_ids_[slice_id] = static_cast<int>(i);
+                    }
+                }
+            }
+        }
+        {
+            raw_slice_text_.clear();
+            raw_slice_metadata_.clear();
+            raw_slice_hashes_.clear();
+
+            std::ifstream in(config_.index_path + ".raw_slices.json", std::ios::binary);
+            if (in.is_open()) {
+                json j;
+                in >> j;
+                const json slices = j.value("slices", json::object());
+                for (auto it = slices.begin(); it != slices.end(); ++it) {
+                    if (!it.value().is_object()) {
+                        continue;
+                    }
+                    const std::string slice_id = it.value().value("slice_id", it.key());
+                    if (slice_id.empty()) {
+                        continue;
+                    }
+                    raw_slice_text_[slice_id] = it.value().value("raw", "");
+                    raw_slice_metadata_[slice_id] = it.value().contains("meta")
+                        ? it.value()["meta"].dump()
+                        : "";
+                    raw_slice_hashes_[slice_id] = it.value().value("hash", "");
+                }
+            }
+
+            if (raw_slice_text_.empty()) {
+                const size_t count = std::min(chunks_.size(), metadata_.size());
+                for (size_t i = 0; i < count; ++i) {
+                    const rag_json metadata = rag_parse_metadata(metadata_[i]);
+                    const std::string slice_id = rag_metadata_value_string(metadata, "slice_id");
+                    if (slice_id.empty()) {
+                        continue;
+                    }
+                    raw_slice_text_[slice_id] = chunks_[i];
+                    raw_slice_metadata_[slice_id] = rag_metadata_to_string(metadata);
+                    raw_slice_hashes_[slice_id] = rag_metadata_value_string(metadata, "text_hash");
+                }
             }
         }
         {

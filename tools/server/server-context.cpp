@@ -9,6 +9,7 @@
 #include "server-remote-session-turn.h"
 #include "server-response-generator.h"
 #include "server-rag-routes.h"
+#include "server-supervision.h"
 #include "server-trace-registry.h"
 #include "server-embedding-routes.h"
 #include "server-slot-action-routes.h"
@@ -91,6 +92,189 @@ json build_rag_supporting_slice_ids(const json & approved_context) {
     return slice_ids;
 }
 
+struct chat_supervision_verdict {
+    bool supervised = false;
+    bool model_response_allowed = true;
+    bool service_report_allowed = false;
+    std::string supervision_state = "UNSUPERVISED";
+    std::string execution_disposition = "FINALIZE_ANSWER";
+    std::string failure_mode;
+    std::string reason;
+    std::string route;
+    std::string dominant_decision;
+    int approved_context_count = 0;
+};
+
+server_supervision_envelope to_supervision_envelope(const chat_supervision_verdict & verdict) {
+    server_supervision_envelope envelope;
+    envelope.supervision_status = verdict.supervision_state;
+    envelope.execution_disposition = verdict.execution_disposition;
+    envelope.response_allowed = verdict.model_response_allowed;
+    envelope.failure_mode = verdict.failure_mode;
+    envelope.reason = verdict.reason;
+    envelope.route = verdict.route;
+    envelope.dominant_decision = verdict.dominant_decision;
+    envelope.approved_context_count = verdict.approved_context_count;
+    if (!verdict.failure_mode.empty()) {
+        envelope.alarm_code = verdict.failure_mode;
+        envelope.alarm_message = verdict.reason;
+    }
+    return envelope;
+}
+
+bool should_force_supervision_override(const json & body) {
+    return body.value("supervision_override_mode", "") == "force";
+}
+
+bool should_skip_rag_injection(const json & body) {
+    return body.value("skip_rag_injection", false) || should_force_supervision_override(body);
+}
+
+chat_supervision_verdict evaluate_request_supervision(const json & body) {
+    chat_supervision_verdict verdict;
+    const json admission_summary = body.value("admission_summary", json::object());
+    const json approved_context = body.value("approved_context", json::array());
+
+    verdict.supervised =
+        body.contains("rag_request_id") ||
+        body.contains("rag_trace_id") ||
+        !admission_summary.empty() ||
+        (approved_context.is_array() && !approved_context.empty());
+    verdict.approved_context_count = approved_context.is_array() ? static_cast<int>(approved_context.size()) : 0;
+
+    if (!verdict.supervised) {
+        return verdict;
+    }
+
+    verdict.route = admission_summary.value("route", "");
+    verdict.dominant_decision = admission_summary.value("dominant_decision", "");
+
+    if (verdict.route == "admit_to_cognitive_layer" && verdict.approved_context_count > 0) {
+        verdict.model_response_allowed = true;
+        verdict.supervision_state = "APPROVED";
+        verdict.execution_disposition = "FINALIZE_ANSWER";
+        verdict.reason = "APPROVED_CONTEXT_READY";
+        return verdict;
+    }
+
+    verdict.model_response_allowed = false;
+    verdict.service_report_allowed = true;
+
+    if (verdict.route == "repair_then_retry") {
+        verdict.supervision_state = "IN_PROGRESS";
+        verdict.execution_disposition = "CONTINUE_EXECUTION";
+        verdict.failure_mode = "SUPERVISION_REPAIR_REQUIRED";
+        verdict.reason = "CLIPS_REQUIRES_REPAIR_BEFORE_MODEL_RESPONSE";
+    } else if (verdict.route == "human_review") {
+        verdict.supervision_state = "NEEDS_HUMAN_REVIEW";
+        verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+        verdict.failure_mode = "SUPERVISION_REQUIRES_HUMAN_REVIEW";
+        verdict.reason = "CLIPS_BLOCKED_DIRECT_RESPONSE";
+    } else if (verdict.route == "session_only") {
+        verdict.supervision_state = "SESSION_ONLY";
+        verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+        verdict.failure_mode = "SUPERVISION_SESSION_ONLY";
+        verdict.reason = "CLIPS_ALLOWED_SHORT_TERM_ONLY";
+    } else if (verdict.route == "drop_result") {
+        verdict.supervision_state = "BLOCKED_BY_POLICY";
+        verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+        verdict.failure_mode = "SUPERVISION_DROP_RESULT";
+        verdict.reason = "CLIPS_REJECTED_CONTEXT_ADMISSION";
+    } else if (verdict.approved_context_count == 0) {
+        verdict.supervision_state = "BLOCKED_BY_POLICY";
+        verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+        verdict.failure_mode = "NO_APPROVED_CONTEXT";
+        verdict.reason = "SUPERVISION_CONTEXT_NOT_APPROVED";
+    } else {
+        verdict.supervision_state = "BLOCKED_BY_POLICY";
+        verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+        verdict.failure_mode = "SUPERVISION_ROUTE_UNRESOLVED";
+        verdict.reason = "UNRESOLVED_SUPERVISION_ROUTE";
+    }
+
+    return verdict;
+}
+
+chat_supervision_verdict evaluate_output_supervision(
+        const json & request_body,
+        const json & output_validation) {
+    chat_supervision_verdict verdict = evaluate_request_supervision(request_body);
+    if (!verdict.supervised || !verdict.model_response_allowed) {
+        return verdict;
+    }
+
+    const std::string decision = output_validation.value("decision", "");
+    const std::string status = output_validation.value("status", "");
+    const std::string reason = output_validation.value("reason", "");
+
+    if (decision == "PASS" && status == "APPROVED") {
+        verdict.supervision_state = "APPROVED";
+        verdict.execution_disposition = "FINALIZE_ANSWER";
+        verdict.reason = reason.empty() ? "ALL_CLAIMS_SUPPORTED_BY_APPROVED_CONTEXT" : reason;
+        return verdict;
+    }
+
+    verdict.model_response_allowed = false;
+    verdict.service_report_allowed = true;
+
+    if (decision == "REJECT" || status == "RETRY_REQUIRED") {
+        verdict.supervision_state = "FAILED_VALIDATION";
+        verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+        verdict.failure_mode = "OUTPUT_VALIDATION_REJECTED";
+        verdict.reason = reason.empty() ? "OUTPUT_VALIDATION_REJECTED" : reason;
+    } else {
+        verdict.supervision_state = "NEEDS_HUMAN_REVIEW";
+        verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+        verdict.failure_mode = "OUTPUT_VALIDATION_REVIEW";
+        verdict.reason = reason.empty() ? "OUTPUT_VALIDATION_REVIEW" : reason;
+    }
+
+    return verdict;
+}
+
+json build_supervision_json(const chat_supervision_verdict & verdict) {
+    json result = to_json(to_supervision_envelope(verdict));
+    result["service_report_allowed"] = verdict.service_report_allowed;
+    return result;
+}
+
+std::string build_supervision_status_message(const chat_supervision_verdict & verdict) {
+    if (verdict.execution_disposition == "CONTINUE_EXECUTION") {
+        return "Supervision blocked releasing a model answer because the request still requires repair or further execution before completion.";
+    }
+    return "Supervision blocked releasing the model answer. The service is returning a status report instead of model-generated natural language.";
+}
+
+json build_supervision_blocked_chat_response(
+        const std::string & model_name,
+        const json & body,
+        const chat_supervision_verdict & verdict) {
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    const auto created = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+    return json{
+        {"id", gen_chatcmplid()},
+        {"object", "chat.completion"},
+        {"created", created},
+        {"model", model_name},
+        {"choices", json::array({
+            json{
+                {"index", 0},
+                {"message", {
+                    {"role", "assistant"},
+                    {"content", build_supervision_status_message(verdict)},
+                }},
+                {"finish_reason", "stop"},
+            }
+        })},
+        {"request_id", body.value("rag_request_id", body.value("request_id", ""))},
+        {"trace_id", body.value("rag_trace_id", body.value("trace_id", ""))},
+        {"query_id", body.value("rag_query_id", body.value("query_id", ""))},
+        {"approved_context", body.value("approved_context", json::array())},
+        {"admission_summary", body.value("admission_summary", json::object())},
+        {"supervision", build_supervision_json(verdict)},
+    };
+}
+
 std::string extract_completion_text(const json & payload) {
     if (payload.contains("choices") && payload["choices"].is_array() && !payload["choices"].empty()) {
         const json & choice = payload["choices"][0];
@@ -163,6 +347,7 @@ void attach_rag_completion_metadata(json & payload, const json & data, const std
         content,
         approved_context,
         supporting_slice_ids);
+    const chat_supervision_verdict supervision_verdict = evaluate_output_supervision(data, output_validation);
 
     if (!request_id.empty()) {
         payload["request_id"] = request_id;
@@ -195,9 +380,24 @@ void attach_rag_completion_metadata(json & payload, const json & data, const std
         {"content_hash", content_hash},
         {"approved_by_clips", approved_by_clips},
         {"supporting_slice_ids", supporting_slice_ids},
-        {"status", approved_by_clips ? "APPROVED" : "UNCONSTRAINED"},
+        {"status", supervision_verdict.model_response_allowed ? (approved_by_clips ? "APPROVED" : "UNCONSTRAINED") : "SUPPRESSED"},
     };
     payload["llama_output_validation"] = output_validation;
+    payload["supervision"] = build_supervision_json(supervision_verdict);
+
+    if (!supervision_verdict.model_response_allowed) {
+        const std::string status_message = build_supervision_status_message(supervision_verdict);
+        if (payload.contains("choices") && payload["choices"].is_array() && !payload["choices"].empty()) {
+            json & first_choice = payload["choices"][0];
+            if (first_choice.contains("message") && first_choice["message"].is_object()) {
+                first_choice["message"]["content"] = status_message;
+                first_choice["message"].erase("reasoning_content");
+            } else if (first_choice.contains("text")) {
+                first_choice["text"] = status_message;
+            }
+            first_choice["finish_reason"] = "stop";
+        }
+    }
 
     if (payload.contains("structured_conclusion") && payload["structured_conclusion"].is_object()) {
         payload["structured_conclusion"]["request_id"] = request_id;
@@ -208,6 +408,7 @@ void attach_rag_completion_metadata(json & payload, const json & data, const std
         payload["structured_conclusion"]["approved_context"] = approved_context;
         payload["structured_conclusion"]["supporting_slice_ids"] = supporting_slice_ids;
         payload["structured_conclusion"]["llama_output_validation"] = output_validation;
+        payload["structured_conclusion"]["supervision"] = payload["supervision"];
         if (data.contains("admission_summary")) {
             payload["structured_conclusion"]["admission_summary"] = data["admission_summary"];
         }
@@ -223,6 +424,7 @@ void attach_rag_completion_metadata(json & payload, const json & data, const std
         {"admission_summary", data.value("admission_summary", json::object())},
         {"llama_output_candidate", payload["llama_output_candidate"]},
         {"llama_output_validation", payload["llama_output_validation"]},
+        {"supervision", payload["supervision"]},
         {"final_output", payload["final_output"]},
         {"structured_conclusion", payload.value("structured_conclusion", json::object())},
     });
@@ -707,6 +909,15 @@ private:
             const bool template_supports_thinking = params_base.use_jinja && common_chat_templates_support_enable_thinking(chat_templates.get());
             const bool enable_thinking = params_base.enable_reasoning != 0 && template_supports_thinking;
             SRV_INF("%s: chat template, thinking = %d\n", __func__, enable_thinking);
+            SRV_INF("%s: chat defaults: use_jinja=%d, prefill_assistant=%d, enable_reasoning=%d, template_supports_thinking=%d, reasoning_format=%d, reasoning_budget=%d, force_pure_content=%d\n",
+                __func__,
+                params_base.use_jinja,
+                params_base.prefill_assistant,
+                params_base.enable_reasoning,
+                template_supports_thinking,
+                static_cast<int>(params_base.reasoning_format),
+                params_base.reasoning_budget,
+                params_base.force_pure_content_parser);
 
             chat_params = {
                 /* use_jinja             */ params_base.use_jinja,
@@ -2540,6 +2751,97 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
         const auto build_messages_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - t_start_build_messages).count();
 
+        const chat_supervision_verdict supervision_verdict = evaluate_request_supervision(body);
+        if (supervision_verdict.supervised && !supervision_verdict.model_response_allowed) {
+            const std::string result_ref = get_string_or_empty(body, "result_ref").empty()
+                ? ("session:" + session_id + "/turn:" + turn_id)
+                : get_string_or_empty(body, "result_ref");
+            const std::string evidence_ref = get_string_or_empty(body, "evidence_ref").empty()
+                ? result_ref
+                : get_string_or_empty(body, "evidence_ref");
+            const json response_json = build_supervision_blocked_chat_response(meta->model_name, body, supervision_verdict);
+            json normalized = build_ventriloquy_result(response_json, session_id, turn_id, write_mode);
+            const json messages = body["messages"];
+            const std::string user_text = messages.empty()
+                ? ""
+                : flatten_message_content(messages.back().value("content", json()));
+            const json tool_availability_snapshot = body.contains("tool_availability_snapshot")
+                && !body.at("tool_availability_snapshot").is_null()
+                    ? body.at("tool_availability_snapshot")
+                    : default_tool_availability_snapshot();
+
+            json metadata = {
+                {"turn_id", turn_id},
+                {"write_mode", write_mode},
+                {"task_id", get_string_or_empty(body, "task_id")},
+                {"task_group_id", get_string_or_empty(body, "task_group_id")},
+                {"source_type", get_string_or_empty(body, "source_type")},
+                {"source_label", get_string_or_empty(body, "source_label")},
+                {"handoff_from", get_string_or_empty(body, "handoff_from")},
+                {"handoff_to", get_string_or_empty(body, "handoff_to")},
+                {"takeover_relation", get_string_or_empty(body, "takeover_relation")},
+                {"speaker_mode", get_string_or_empty(body, "speaker_mode")},
+                {"reasoning_level", get_string_or_empty(body, "reasoning_level")},
+                {"prompt_purpose", get_string_or_empty(body, "prompt_purpose")},
+                {"response_mode", get_string_or_empty(body, "response_mode")},
+                {"context_refs", get_array_or_empty(body, "context_refs")},
+                {"tool_availability_snapshot", tool_availability_snapshot},
+                {"user_text", user_text},
+                {"assistant_text", build_supervision_status_message(supervision_verdict)},
+                {"summary", build_supervision_status_message(supervision_verdict)},
+                {"direct_answer", normalized.value("direct_answer", "")},
+                {"next_action", normalized.value("next_action", "")},
+                {"confidence", normalized.value("confidence", "blocked")},
+                {"result_ref", result_ref},
+                {"evidence_ref", evidence_ref},
+                {"admission_summary", body.value("admission_summary", json::object())},
+                {"supervision", build_supervision_json(supervision_verdict)},
+                {"timings", json{
+                    {"build_messages_ms", build_messages_ms},
+                    {"model_completion_ms", 0},
+                    {"normalize_result_ms", 0},
+                    {"persist_session_ms", 0}
+                }}
+            };
+
+            const auto t_start_persist = std::chrono::steady_clock::now();
+            const json persisted_turn = g_remote_session_store.upsert_turn(session_id, metadata, body, response_json);
+            const auto persist_session_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t_start_persist).count();
+            const auto remote_session_turn_total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t_start_total).count();
+
+            metadata["timings"]["persist_session_ms"] = persist_session_ms;
+            normalized["result_ref"] = result_ref;
+            normalized["evidence_ref"] = evidence_ref;
+            normalized["admission_summary"] = body.value("admission_summary", json::object());
+            normalized["supervision"] = build_supervision_json(supervision_verdict);
+            normalized["provider_id"] = get_string_or_empty(persisted_turn, "provider_id");
+            normalized["capability_id"] = get_string_or_empty(persisted_turn, "capability_id");
+            normalized["slice_id"] = get_string_or_empty(persisted_turn, "slice_id");
+            normalized["slice_path"] = get_string_or_empty(persisted_turn, "slice_path");
+            normalized["timings"] = json{
+                {"build_messages_ms", build_messages_ms},
+                {"model_completion_ms", 0},
+                {"normalize_result_ms", 0},
+                {"persist_session_ms", persist_session_ms},
+                {"remote_session_turn_total_ms", remote_session_turn_total_ms}
+            };
+
+            const std::string trace_id = body.value("rag_trace_id", body.value("trace_id", ""));
+            server_trace_registry::record_stage(trace_id, "supervision_gate_pre_model", json{
+                {"trace_id", trace_id},
+                {"request_id", body.value("rag_request_id", body.value("request_id", ""))},
+                {"query_id", body.value("rag_query_id", body.value("query_id", ""))},
+                {"admission_summary", body.value("admission_summary", json::object())},
+                {"approved_context", body.value("approved_context", json::array())},
+                {"supervision", build_supervision_json(supervision_verdict)},
+            });
+
+            res->ok(normalized);
+            return res;
+        }
+
         const auto t_start_model_completion = std::chrono::steady_clock::now();
         std::vector<raw_buffer> files;
         json body_parsed = oaicompat_chat_params_parse(body, meta->chat_params, files);
@@ -3112,15 +3414,38 @@ this->post_chat_completions = [this](const server_http_req & req) {
     json body = json::parse(req.body);
 
     std::string rag_error;
-    if (!server_rag_routes::maybe_inject_chat_context(
-            params,
-            ctx_server.rag_runtime.get(),
-            body,
-            &rag_error) &&
-        !rag_error.empty()) {
-        SRV_WRN("RAG injection skipped: %s\n", rag_error.c_str());
+    const bool skip_rag_injection = should_skip_rag_injection(body);
+    if (!skip_rag_injection) {
+        if (!server_rag_routes::maybe_inject_chat_context(
+                params,
+                ctx_server.rag_runtime.get(),
+                body,
+                &rag_error) &&
+            !rag_error.empty()) {
+            SRV_WRN("RAG injection skipped: %s\n", rag_error.c_str());
+        }
+    } else {
+        SRV_INF("chat supervision override active: skipping RAG injection (mode=%s, skip_rag_injection=%d)\n",
+            body.value("supervision_override_mode", "").c_str(),
+            body.value("skip_rag_injection", false) ? 1 : 0);
     }
     record_injected_rag_stage(body);
+    const chat_supervision_verdict supervision_verdict = evaluate_request_supervision(body);
+    if (supervision_verdict.supervised && !supervision_verdict.model_response_allowed) {
+        const std::string trace_id = body.value("rag_trace_id", body.value("trace_id", ""));
+        server_trace_registry::record_stage(trace_id, "supervision_gate_pre_model", json{
+            {"trace_id", trace_id},
+            {"request_id", body.value("rag_request_id", body.value("request_id", ""))},
+            {"query_id", body.value("rag_query_id", body.value("query_id", ""))},
+            {"skip_rag_injection", skip_rag_injection},
+            {"supervision_override_mode", body.value("supervision_override_mode", "")},
+            {"admission_summary", body.value("admission_summary", json::object())},
+            {"approved_context", body.value("approved_context", json::array())},
+            {"supervision", build_supervision_json(supervision_verdict)},
+        });
+        res->ok(build_supervision_blocked_chat_response(meta->model_name, body, supervision_verdict));
+        return res;
+    }
 
     json body_parsed = oaicompat_chat_params_parse(
         body,
@@ -3194,15 +3519,38 @@ this->post_responses_oai = [this](const server_http_req & req) {
     json body = convert_responses_to_chatcmpl(json::parse(req.body));
 
     std::string rag_error;
-    if (!server_rag_routes::maybe_inject_chat_context(
-            params,
-            ctx_server.rag_runtime.get(),
-            body,
-            &rag_error) &&
-        !rag_error.empty()) {
-        SRV_WRN("RAG injection skipped: %s\n", rag_error.c_str());
+    const bool skip_rag_injection = should_skip_rag_injection(body);
+    if (!skip_rag_injection) {
+        if (!server_rag_routes::maybe_inject_chat_context(
+                params,
+                ctx_server.rag_runtime.get(),
+                body,
+                &rag_error) &&
+            !rag_error.empty()) {
+            SRV_WRN("RAG injection skipped: %s\n", rag_error.c_str());
+        }
+    } else {
+        SRV_INF("responses supervision override active: skipping RAG injection (mode=%s, skip_rag_injection=%d)\n",
+            body.value("supervision_override_mode", "").c_str(),
+            body.value("skip_rag_injection", false) ? 1 : 0);
     }
     record_injected_rag_stage(body);
+    const chat_supervision_verdict supervision_verdict = evaluate_request_supervision(body);
+    if (supervision_verdict.supervised && !supervision_verdict.model_response_allowed) {
+        const std::string trace_id = body.value("rag_trace_id", body.value("trace_id", ""));
+        server_trace_registry::record_stage(trace_id, "supervision_gate_pre_model", json{
+            {"trace_id", trace_id},
+            {"request_id", body.value("rag_request_id", body.value("request_id", ""))},
+            {"query_id", body.value("rag_query_id", body.value("query_id", ""))},
+            {"skip_rag_injection", skip_rag_injection},
+            {"supervision_override_mode", body.value("supervision_override_mode", "")},
+            {"admission_summary", body.value("admission_summary", json::object())},
+            {"approved_context", body.value("approved_context", json::array())},
+            {"supervision", build_supervision_json(supervision_verdict)},
+        });
+        res->ok(build_supervision_blocked_chat_response(meta->model_name, body, supervision_verdict));
+        return res;
+    }
 
     SRV_DBG("%s\n", "Request converted: OpenAI Responses -> OpenAI Chat Completions");
     SRV_DBG("converted request: %s\n", body.dump().c_str());
@@ -3537,6 +3885,60 @@ this->get_debug_trace = [this](const server_http_req & req) {
     json payload;
     if (!server_trace_registry::get_trace(trace_id, payload)) {
         res->error(format_error_response("trace_id not found", ERROR_TYPE_NOT_FOUND));
+        return res;
+    }
+
+    res->ok(payload);
+    return res;
+};
+
+this->get_debug_request = [this](const server_http_req & req) {
+    auto res = create_response(true);
+    const std::string request_id = req.get_param("request_id");
+    if (request_id.empty()) {
+        res->error(format_error_response("request_id is required", ERROR_TYPE_INVALID_REQUEST));
+        return res;
+    }
+
+    json payload;
+    if (!server_trace_registry::get_request(request_id, payload)) {
+        res->error(format_error_response("request_id not found", ERROR_TYPE_NOT_FOUND));
+        return res;
+    }
+
+    res->ok(payload);
+    return res;
+};
+
+this->get_debug_goal = [this](const server_http_req & req) {
+    auto res = create_response(true);
+    const std::string goal_id = req.get_param("goal_id");
+    if (goal_id.empty()) {
+        res->error(format_error_response("goal_id is required", ERROR_TYPE_INVALID_REQUEST));
+        return res;
+    }
+
+    json payload;
+    if (!server_trace_registry::get_goal(goal_id, payload)) {
+        res->error(format_error_response("goal_id not found", ERROR_TYPE_NOT_FOUND));
+        return res;
+    }
+
+    res->ok(payload);
+    return res;
+};
+
+this->get_debug_goal_events = [this](const server_http_req & req) {
+    auto res = create_response(true);
+    const std::string goal_id = req.get_param("goal_id");
+    if (goal_id.empty()) {
+        res->error(format_error_response("goal_id is required", ERROR_TYPE_INVALID_REQUEST));
+        return res;
+    }
+
+    json payload;
+    if (!server_trace_registry::get_goal_events(goal_id, payload)) {
+        res->error(format_error_response("goal_id events not found", ERROR_TYPE_NOT_FOUND));
         return res;
     }
 
