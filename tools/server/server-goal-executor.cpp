@@ -258,6 +258,55 @@ server_tool_call_envelope make_action_envelope(
     return envelope;
 }
 
+bool normalize_next_action_json(
+        json & action,
+        std::string & failure_mode,
+        json & alarm) {
+    if (!action.is_object()) {
+        failure_mode = "NEXT_ACTION_DESCRIPTOR_INVALID";
+        alarm = build_alarm_event("ERROR", failure_mode, "next_action entry must be an object");
+        return false;
+    }
+
+    if (action.value("tool_name", "").empty()) {
+        failure_mode = "NEXT_ACTION_TOOL_NAME_MISSING";
+        alarm = build_alarm_event("ERROR", failure_mode, "next_action is missing tool_name");
+        return false;
+    }
+
+    if (action.value("safety_class", "").empty()) {
+        failure_mode = "NEXT_ACTION_SAFETY_CLASS_MISSING";
+        alarm = build_alarm_event("ERROR", failure_mode, "next_action is missing safety_class");
+        return false;
+    }
+
+    if (action.contains("params") && action.at("params").is_object()) {
+        return true;
+    }
+
+    const std::string next_call_json = action.value("next_call_json", "");
+    if (next_call_json.empty()) {
+        failure_mode = "NEXT_CALL_JSON_MISSING";
+        alarm = build_alarm_event("ERROR", failure_mode, "next_action is missing both params and next_call_json");
+        return false;
+    }
+
+    try {
+        json parsed = json::parse(next_call_json);
+        if (!parsed.is_object()) {
+            failure_mode = "NEXT_CALL_JSON_INVALID";
+            alarm = build_alarm_event("ERROR", failure_mode, "next_call_json must decode to a JSON object");
+            return false;
+        }
+        action["params"] = parsed;
+        return true;
+    } catch (const std::exception &) {
+        failure_mode = "NEXT_CALL_JSON_INVALID";
+        alarm = build_alarm_event("ERROR", failure_mode, "next_call_json is not valid JSON");
+        return false;
+    }
+}
+
 json build_goal_result(
         const server_goal_envelope & goal,
         const server_goal_acceptance & acceptance) {
@@ -360,11 +409,15 @@ json server_goal_execution_controller::execute_goal_until_closed(
     std::string last_progress_signature;
     int same_progress_rounds = 0;
     std::map<std::string, int> action_repeat_counts;
+    json test_acceptance_snapshot = goal.test_acceptance_snapshot;
 
     server_trace_registry::record_stage(goal.trace_id, "goal_start", to_json(goal));
 
     for (int step = 0; step < policy.max_steps; ++step) {
-        const json state_snapshot = build_state_snapshot(goal, state);
+        const json state_snapshot = test_acceptance_snapshot.is_object()
+            ? test_acceptance_snapshot
+            : build_state_snapshot(goal, state);
+        test_acceptance_snapshot = nullptr;
         const server_goal_route_decision acceptance_route = router.acceptance_check(goal, state_snapshot);
         server_trace_registry::append_event(goal.trace_id, "acceptance_check", json{
             {"goal_id", goal.goal_id},
@@ -418,7 +471,21 @@ json server_goal_execution_controller::execute_goal_until_closed(
             policy.max_pending_actions_per_round);
 
         for (int i = 0; i < action_limit; ++i) {
-            const json & action_json = acceptance_route.next_actions.at(i);
+            json action_json = acceptance_route.next_actions.at(i);
+            std::string action_shape_failure_mode;
+            json action_shape_alarm;
+            if (!normalize_next_action_json(action_json, action_shape_failure_mode, action_shape_alarm)) {
+                server_goal_acceptance acceptance;
+                acceptance.goal_id = goal.goal_id;
+                acceptance.acceptance_status = "NOT_COMPLETE";
+                acceptance.final_status = "FAILED";
+                acceptance.failure_mode = action_shape_failure_mode;
+                acceptance.progress = acceptance_route.progress;
+                acceptance.alarms.push_back(action_shape_alarm);
+                finalize_acceptance(goal, acceptance);
+                return build_goal_result(goal, acceptance);
+            }
+
             server_tool_call_envelope action = make_action_envelope(goal, action_json);
             const bool permission_write = is_write_tool_(action.tool_name);
 

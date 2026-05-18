@@ -168,7 +168,54 @@ json parse_direct_payload(const std::string & content) {
         }
     }
 
+    json kv_payload = json::object();
+    std::istringstream iss(content);
+    std::string line;
+    while (std::getline(iss, line)) {
+        const std::string trimmed = trim_ascii(line);
+        if (trimmed.empty()) {
+            continue;
+        }
+
+        const size_t eq = trimmed.find('=');
+        if (eq == std::string::npos || eq == 0) {
+            continue;
+        }
+
+        const std::string key = trim_ascii(trimmed.substr(0, eq));
+        const std::string raw_value = trim_ascii(trimmed.substr(eq + 1));
+        if (key.empty()) {
+            continue;
+        }
+
+        if (raw_value.empty()) {
+            kv_payload[key] = "";
+            continue;
+        }
+
+        const std::string lowered = lower_ascii(raw_value);
+        if (lowered == "true") {
+            kv_payload[key] = true;
+            continue;
+        }
+        if (lowered == "false") {
+            kv_payload[key] = false;
+            continue;
+        }
+
+        try {
+            kv_payload[key] = json::parse(raw_value);
+            continue;
+        } catch (...) {
+        }
+
+        kv_payload[key] = raw_value;
+    }
+
+    if (!kv_payload.empty()) {
+        return kv_payload;
+    }
+
     return json::object();
 }
-
 } // namespace server_json

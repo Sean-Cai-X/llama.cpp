@@ -6,6 +6,7 @@
 #include "server-tool-envelope.h"
 #include "server-trace-registry.h"
 
+#include <cpp-httplib/httplib.h>
 #include <sheredom/subprocess.h>
 
 #include <filesystem>
@@ -118,6 +119,258 @@ static uint64_t fnv1a64_bytes(const std::string & text) {
     return hash;
 }
 
+static std::string sanitize_json_text(std::string text) {
+    for (char & ch : text) {
+        const unsigned char byte = static_cast<unsigned char>(ch);
+        if (byte < 0x20 && ch != '\n' && ch != '\r' && ch != '\t') {
+            ch = ' ';
+        }
+    }
+    return text;
+}
+
+static json tool_error_json(std::string message) {
+    return {{"error", sanitize_json_text(std::move(message))}};
+}
+
+static bool json_boolish_value(const json & body, const std::string & key, bool default_value) {
+    if (!body.contains(key) || body.at(key).is_null()) {
+        return default_value;
+    }
+    const json & value = body.at(key);
+    if (value.is_boolean()) {
+        return value.get<bool>();
+    }
+    if (value.is_number_integer()) {
+        return value.get<int>() != 0;
+    }
+    if (value.is_string()) {
+        std::string s = value.get<std::string>();
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        if (s == "true" || s == "1" || s == "yes") {
+            return true;
+        }
+        if (s == "false" || s == "0" || s == "no") {
+            return false;
+        }
+    }
+    return default_value;
+}
+
+static constexpr const char * SERVER_TOOL_LAN_AGENT_HOST = "192.168.9.100";
+static constexpr int SERVER_TOOL_LAN_AGENT_PORT = 18080;
+static constexpr const char * SERVER_TOOL_LAN_AGENT_TOOLS_PATH = "/mcp";
+static constexpr int SERVER_TOOL_LAN_AGENT_TIMEOUT_SECS = 120;
+static constexpr int SERVER_TOOL_LAN_AGENT_MAX_CONTINUATION_STEPS = 4096;
+
+static json extract_remote_lan_agent_result(const json & rpc_result) {
+    if (!rpc_result.is_object()) {
+        return tool_error_json("remote LAN agent MCP returned non-object JSON-RPC payload");
+    }
+    if (rpc_result.contains("error") && rpc_result.at("error").is_object()) {
+        const json & err = rpc_result.at("error");
+        return {
+            {"error", err.value("message", std::string("remote LAN agent MCP error"))},
+            {"error_code", err.value("code", 0)},
+        };
+    }
+    if (!rpc_result.contains("result") || !rpc_result.at("result").is_object()) {
+        return tool_error_json("remote LAN agent MCP response is missing result object");
+    }
+
+    const json & result = rpc_result.at("result");
+    if (json_boolish_value(result, "isError", false)) {
+        std::string message = "remote LAN agent MCP result isError";
+        if (result.contains("structuredContent") && result.at("structuredContent").is_object()) {
+            const json & sc = result.at("structuredContent");
+            if (sc.contains("error") && sc.at("error").is_string()) {
+                message = sc.at("error").get<std::string>();
+            }
+        }
+        if (result.contains("content") && result.at("content").is_array() && !result.at("content").empty()) {
+            const json & item0 = result.at("content").front();
+            if (item0.is_object() && item0.contains("text") && item0.at("text").is_string()) {
+                message = item0.at("text").get<std::string>();
+            }
+        }
+        return tool_error_json(message);
+    }
+
+    if (result.contains("structuredContent") && result.at("structuredContent").is_object()) {
+        return result.at("structuredContent");
+    }
+
+    if (result.contains("content") && result.at("content").is_array() && !result.at("content").empty()) {
+        const json & item0 = result.at("content").front();
+        if (item0.is_object() && item0.contains("text") && item0.at("text").is_string()) {
+            const std::string text = item0.at("text").get<std::string>();
+            try {
+                json parsed = json::parse(text);
+                if (parsed.is_object()) {
+                    return parsed;
+                }
+            } catch (...) {
+            }
+            return {{"plain_text_response", text}};
+        }
+    }
+
+    return tool_error_json("remote LAN agent MCP result does not contain structuredContent");
+}
+
+static json invoke_remote_lan_agent_tool(
+        const std::string & tool_name,
+        const json & params) {
+    httplib::Client cli(SERVER_TOOL_LAN_AGENT_HOST, SERVER_TOOL_LAN_AGENT_PORT);
+    cli.set_follow_location(true);
+    cli.set_connection_timeout(5, 0);
+    cli.set_read_timeout(SERVER_TOOL_LAN_AGENT_TIMEOUT_SECS, 0);
+    cli.set_write_timeout(SERVER_TOOL_LAN_AGENT_TIMEOUT_SECS, 0);
+
+    static std::atomic<int> rpc_id{5000};
+    json body = {
+        {"jsonrpc", "2.0"},
+        {"id", ++rpc_id},
+        {"method", "tools/call"},
+        {"params", {
+            {"name", tool_name},
+            {"arguments", params},
+        }},
+    };
+
+    auto res = cli.Post(
+        SERVER_TOOL_LAN_AGENT_TOOLS_PATH,
+        safe_json_to_str(body),
+        "application/json; charset=utf-8");
+
+    if (!res) {
+        return tool_error_json("failed to invoke remote LAN agent MCP tool: " + tool_name);
+    }
+
+    try {
+        json rpc_result = json::parse(res->body);
+        return extract_remote_lan_agent_result(rpc_result);
+    } catch (const std::exception & e) {
+        return tool_error_json(std::string("remote LAN agent MCP returned invalid JSON: ") + e.what());
+    }
+}
+
+static json consume_remote_lan_agent_continuation(
+        const std::string & initial_tool_name,
+        const json & initial_params) {
+    std::string tool_name = initial_tool_name;
+    json params = initial_params;
+    json continuation_steps = json::array();
+
+    for (int step = 0; step < SERVER_TOOL_LAN_AGENT_MAX_CONTINUATION_STEPS; ++step) {
+        SRV_INF("lan_agent_mcp_continue: step=%d tool='%s'\n", step, tool_name.c_str());
+        json result = invoke_remote_lan_agent_tool(tool_name, params);
+
+        const std::string status = result.value("status", "");
+        const std::string status_code = result.value("status_code", "");
+        const std::string current_file_path = result.value("current_file_path", result.value("path", ""));
+        const bool file_complete = json_boolish_value(result, "file_complete", false);
+        const bool directory_complete = json_boolish_value(result, "directory_complete", false);
+
+        continuation_steps.push_back({
+            {"step", step},
+            {"tool", tool_name},
+            {"status", status},
+            {"status_code", status_code},
+            {"current_file_path", current_file_path},
+            {"file_complete", file_complete},
+            {"directory_complete", directory_complete},
+        });
+
+        if (result.contains("error")) {
+            result["continuation_steps"] = continuation_steps;
+            return result;
+        }
+
+        if (status == "failed") {
+            result["continuation_steps"] = continuation_steps;
+            return result;
+        }
+
+        if (status == "needs_continue") {
+            json next_call = json::object();
+            if (result.contains("next_call_json")) {
+                const json & next_call_json = result.at("next_call_json");
+                if (next_call_json.is_object()) {
+                    next_call = next_call_json;
+                } else if (next_call_json.is_string()) {
+                    try {
+                        json parsed = json::parse(next_call_json.get<std::string>());
+                        if (parsed.is_object()) {
+                            next_call = std::move(parsed);
+                        }
+                    } catch (...) {
+                    }
+                }
+            }
+            if (next_call.empty() &&
+                result.contains("required_tool_arguments_json") &&
+                result.at("required_tool_arguments_json").is_string()) {
+                try {
+                    json parsed = json::parse(result.at("required_tool_arguments_json").get<std::string>());
+                    if (parsed.is_object()) {
+                        next_call = std::move(parsed);
+                    }
+                } catch (...) {
+                }
+            }
+
+            if (!next_call.is_object() || next_call.empty()) {
+                return {
+                    {"error", "remote LAN agent MCP returned needs_continue without valid next_call_json"},
+                    {"continuation_steps", continuation_steps},
+                };
+            }
+
+            const std::string next_tool_name = next_call.value("tool", next_call.value("name", ""));
+            if (next_tool_name.empty()) {
+                return {
+                    {"error", "remote LAN agent MCP next_call_json is missing tool/name"},
+                    {"continuation_steps", continuation_steps},
+                };
+            }
+
+            tool_name = next_tool_name;
+            if (next_call.contains("params") && next_call.at("params").is_object()) {
+                params = next_call.at("params");
+            } else if (next_call.contains("arguments") && next_call.at("arguments").is_object()) {
+                params = next_call.at("arguments");
+            } else {
+                params = json::object();
+            }
+            continue;
+        }
+
+        if (status == "success" || directory_complete || file_complete) {
+            result["continuation_steps"] = continuation_steps;
+            return result;
+        }
+
+        result["continuation_steps"] = continuation_steps;
+        return result;
+    }
+
+    return {
+        {"error", "remote LAN agent MCP continuation exceeded max steps"},
+        {"continuation_steps", continuation_steps},
+    };
+}
+
+static json decorate_remote_lan_agent_result(json result) {
+    result["delegated_to_remote_mcp"] = true;
+    result["remote_host"] = SERVER_TOOL_LAN_AGENT_HOST;
+    result["remote_port"] = SERVER_TOOL_LAN_AGENT_PORT;
+    result["remote_path"] = SERVER_TOOL_LAN_AGENT_TOOLS_PATH;
+    return result;
+}
+
 static std::vector<std::string> read_glob_patterns(
         const json & params,
         const char * single_key,
@@ -209,17 +462,17 @@ struct server_tool_read_file : server_tool {
         std::error_code ec;
         uintmax_t file_size = fs::file_size(path, ec);
         if (ec) {
-            return {{"error", "cannot stat file: " + ec.message()}};
+            return tool_error_json("cannot stat file: " + ec.message());
         }
         if (file_size > SERVER_TOOL_READ_FILE_MAX_SIZE && end_line == -1) {
-            return {{"error", string_format(
+            return tool_error_json(string_format(
                 "file too large (%zu bytes, max %zu). Use start_line/end_line to read a portion.",
-                (size_t)file_size, SERVER_TOOL_READ_FILE_MAX_SIZE)}};
+                (size_t)file_size, SERVER_TOOL_READ_FILE_MAX_SIZE));
         }
 
         std::ifstream f(path);
         if (!f) {
-            return {{"error", "failed to open file: " + path}};
+            return tool_error_json("failed to open file: " + path);
         }
 
         std::string result;
@@ -301,17 +554,17 @@ struct server_tool_file_info : server_tool {
 
         std::error_code ec;
         if (!fs::is_regular_file(path, ec) || ec) {
-            return {{"error", "path does not exist or is not a regular file: " + path}};
+            return tool_error_json("path does not exist or is not a regular file: " + path);
         }
 
         const uintmax_t size_bytes = fs::file_size(path, ec);
         if (ec) {
-            return {{"error", "cannot stat file: " + ec.message()}};
+            return tool_error_json("cannot stat file: " + ec.message());
         }
 
         std::ifstream f(path, std::ios::binary);
         if (!f) {
-            return {{"error", "failed to open file: " + path}};
+            return tool_error_json("failed to open file: " + path);
         }
 
         std::string contents((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -465,7 +718,7 @@ struct server_tool_grep_search : server_tool {
         try {
             pattern = std::regex(pat_str);
         } catch (const std::regex_error & e) {
-            return {{"error", std::string("invalid regex: ") + e.what()}};
+            return tool_error_json(std::string("invalid regex: ") + e.what());
         }
 
         std::ostringstream output_text;
@@ -854,6 +1107,120 @@ struct server_tool_apply_diff : server_tool {
 };
 
 //
+// lan_agent_list_directory: compatibility wrapper for codex-lan-agent directory listing
+//
+
+struct server_tool_lan_agent_list_directory : server_tool {
+    server_tool_lan_agent_list_directory() {
+        name = "lan_agent_list_directory";
+        display_name = "LAN agent list directory";
+        permission_write = false;
+    }
+
+    json get_definition() override {
+        return {
+            {"type", "function"},
+            {"function", {
+                {"name", name},
+                {"description", "List files under a directory for codex-lan-agent compatibility."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"directory_path", {{"type", "string"}, {"description", "Directory to list"}}},
+                        {"max_entries",    {{"type", "integer"}, {"description", "Maximum number of file entries to return"}}},
+                        {"request_id",     {{"type", "string"}, {"description", "Optional request identifier"}}},
+                        {"trace_id",       {{"type", "string"}, {"description", "Optional trace identifier"}}},
+                    }} ,
+                    {"required", json::array({"directory_path"})},
+                }},
+            }},
+        };
+    }
+
+    json invoke(json params) override {
+        SRV_INF("lan_agent_list_directory: delegating to remote LAN agent MCP continuation consumer\n", 0);
+        return decorate_remote_lan_agent_result(consume_remote_lan_agent_continuation(name, params));
+    }
+};
+
+//
+// lan_agent_read_text_file: compatibility wrapper for codex-lan-agent paged text reads
+//
+
+struct server_tool_lan_agent_read_text_file : server_tool {
+    server_tool_lan_agent_read_text_file() {
+        name = "lan_agent_read_text_file";
+        display_name = "LAN agent read text file";
+        permission_write = false;
+    }
+
+    json get_definition() override {
+        return {
+            {"type", "function"},
+            {"function", {
+                {"name", name},
+                {"description", "Read a text file through the remote LAN agent MCP paged continuation protocol."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"file_path",  {{"type", "string"}, {"description", "File path to read"}}},
+                        {"start_line", {{"type", "integer"}, {"description", "1-based starting line"}}},
+                        {"max_lines",  {{"type", "integer"}, {"description", "Maximum number of lines to read"}}},
+                        {"trace_id",   {{"type", "string"}, {"description", "Optional trace identifier"}}},
+                    }},
+                    {"required", json::array({"file_path"})},
+                }},
+            }},
+        };
+    }
+
+    json invoke(json params) override {
+        SRV_INF("lan_agent_read_text_file: delegating to remote LAN agent MCP continuation consumer\n", 0);
+        return decorate_remote_lan_agent_result(consume_remote_lan_agent_continuation(name, params));
+    }
+};
+
+//
+// lan_agent_read_directory_files: compatibility wrapper for codex-lan-agent bulk file reads
+//
+
+struct server_tool_lan_agent_read_directory_files : server_tool {
+    server_tool_lan_agent_read_directory_files() {
+        name = "lan_agent_read_directory_files";
+        display_name = "LAN agent read directory files";
+        permission_write = false;
+    }
+
+    json get_definition() override {
+        return {
+            {"type", "function"},
+            {"function", {
+                {"name", name},
+                {"description", "Read matching files from a directory as one continuous task for codex-lan-agent compatibility."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"directory_path",   {{"type", "string"}, {"description", "Directory to scan"}}},
+                        {"include",          {{"type", "string"}, {"description", "Optional include glob"}}},
+                        {"include_patterns", {{"type", "array"}, {"description", "Optional include glob patterns"}}},
+                        {"exclude",          {{"type", "string"}, {"description", "Optional exclude glob"}}},
+                        {"exclude_patterns", {{"type", "array"}, {"description", "Optional exclude glob patterns"}}},
+                        {"max_entries",      {{"type", "integer"}, {"description", "Optional maximum number of files to read overall; omit to read all matched files"}}},
+                        {"batch_size",       {{"type", "integer"}, {"description", "Deprecated for this compatibility path. Files are processed sequentially one by one; this value is only reported back for visibility."}}},
+                    }},
+                    {"required", json::array({"directory_path"})},
+                }},
+            }},
+        };
+    }
+
+    json invoke(json params) override {
+        SRV_INF("lan_agent_read_directory_files: delegating to remote LAN agent MCP continuation consumer\n",0);
+        return decorate_remote_lan_agent_result(consume_remote_lan_agent_continuation(name, params));
+    }
+};
+
+//
 // public API
 //
 
@@ -863,6 +1230,9 @@ static std::vector<std::unique_ptr<server_tool>> build_tools() {
     tools.push_back(std::make_unique<server_tool_file_info>());
     tools.push_back(std::make_unique<server_tool_file_glob_search>());
     tools.push_back(std::make_unique<server_tool_grep_search>());
+    tools.push_back(std::make_unique<server_tool_lan_agent_list_directory>());
+    tools.push_back(std::make_unique<server_tool_lan_agent_read_text_file>());
+    tools.push_back(std::make_unique<server_tool_lan_agent_read_directory_files>());
     tools.push_back(std::make_unique<server_tool_exec_shell_command>());
     tools.push_back(std::make_unique<server_tool_write_file>());
     tools.push_back(std::make_unique<server_tool_edit_file>());
@@ -956,6 +1326,35 @@ static json build_single_tool_response(
     };
 }
 
+static json build_single_tool_compatible_response(
+        const server_goal_envelope & goal,
+        const server_tool_call_envelope & delivery,
+        const json & result,
+        const server_goal_route_decision & pre,
+        const server_goal_route_decision & post,
+        const server_goal_route_decision & acceptance) {
+    json response = result.is_object() ? result : json{{"result", result}};
+    response["record_model"] = "tool_result_with_envelope_v1";
+    response["tool_envelope"] = build_single_tool_response(goal, delivery, result, pre, post, acceptance);
+    response["supervision"] = response["tool_envelope"]["supervision"];
+    response["delivery"] = response["tool_envelope"]["delivery"];
+    response["acceptance"] = response["tool_envelope"]["acceptance"];
+    return response;
+}
+
+static server_goal_execution_controller::loop_policy build_loop_policy(const json & body) {
+    server_goal_execution_controller::loop_policy policy;
+    const json & policy_body = body.contains("loop_policy") && body.at("loop_policy").is_object()
+        ? body.at("loop_policy")
+        : body;
+
+    policy.max_steps = std::max(1, json_value(policy_body, "max_steps", policy.max_steps));
+    policy.max_same_action_repeat = std::max(1, json_value(policy_body, "max_same_action_repeat", policy.max_same_action_repeat));
+    policy.max_read_files = std::max(1, json_value(policy_body, "max_read_files", policy.max_read_files));
+    policy.max_pending_actions_per_round = std::max(1, json_value(policy_body, "max_pending_actions_per_round", policy.max_pending_actions_per_round));
+    return policy;
+}
+
 void server_tools::setup(const std::vector<std::string> & enabled_tools) {
     if (!enabled_tools.empty()) {
         std::unordered_set<std::string> enabled_set(enabled_tools.begin(), enabled_tools.end());
@@ -991,6 +1390,7 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools) {
             json body = json::parse(req.body);
             if (body.contains("goal_type") || (body.contains("goal") && body.at("goal").is_object())) {
                 server_goal_envelope goal = parse_server_goal_envelope(body);
+                const auto policy = build_loop_policy(body);
                 server_goal_execution_controller controller(
                     [this](const std::string & name, const json & params) {
                         return invoke(name, params);
@@ -998,7 +1398,7 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools) {
                     [this](const std::string & name) {
                         return is_write_tool(name);
                     });
-                json result = controller.execute_goal_until_closed(goal);
+                json result = controller.execute_goal_until_closed(goal, policy);
                 res->data = safe_json_to_str(result);
                 return res;
             }
@@ -1109,7 +1509,8 @@ void server_tools::setup(const std::vector<std::string> & enabled_tools) {
             } else if (result.contains("error")) {
                 res->status = 400;
             }
-            res->data = safe_json_to_str(result);
+            res->data = safe_json_to_str(
+                build_single_tool_compatible_response(goal, delivery, result, pre, post, acceptance));
         } catch (const json::exception & e) {
             res->status = 400;
             res->data   = safe_json_to_str(format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST));
@@ -1128,7 +1529,7 @@ json server_tools::invoke(const std::string & name, const json & params) {
             return t->invoke(params);
         }
     }
-    return {{"error", "unknown tool: " + name}};
+    return tool_error_json("unknown tool: " + name);
 }
 
 bool server_tools::is_write_tool(const std::string & name) const {

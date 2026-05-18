@@ -10,6 +10,7 @@
 #include "server-response-generator.h"
 #include "server-rag-routes.h"
 #include "server-supervision.h"
+#include "server-tools.h"
 #include "server-trace-registry.h"
 #include "server-embedding-routes.h"
 #include "server-slot-action-routes.h"
@@ -103,6 +104,10 @@ struct chat_supervision_verdict {
     std::string route;
     std::string dominant_decision;
     int approved_context_count = 0;
+    std::string clips_first_decision;
+    std::string next_action_0_tool_name;
+    std::string next_action_0_safety_class;
+    json next_action_0_params = json::object();
 };
 
 server_supervision_envelope to_supervision_envelope(const chat_supervision_verdict & verdict) {
@@ -130,12 +135,148 @@ bool should_skip_rag_injection(const json & body) {
     return body.value("skip_rag_injection", false) || should_force_supervision_override(body);
 }
 
+std::string get_clips_first_decision(const json & body) {
+    if (!body.contains("clips_first_decision")) {
+        return "";
+    }
+    const json & value = body.at("clips_first_decision");
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (!value.is_object()) {
+        return "";
+    }
+    return value.value("decision", value.value("status", value.value("route", "")));
+}
+
+json find_tool_continuation_payload(const json & body) {
+    if (!body.contains("messages") || !body.at("messages").is_array()) {
+        return json::object();
+    }
+
+    const json & messages = body.at("messages");
+    for (auto it = messages.rbegin(); it != messages.rend(); ++it) {
+        if (!it->is_object()) {
+            continue;
+        }
+
+        const std::string content = flatten_message_content(it->value("content", json()));
+        if (content.empty()) {
+            continue;
+        }
+
+        json parsed = parse_direct_payload(content);
+        if (!parsed.is_object() || parsed.empty()) {
+            continue;
+        }
+
+        if (parsed.contains("status") ||
+            parsed.contains("next_call_json") ||
+            parsed.contains("continue_required") ||
+            parsed.contains("clips_first_decision") ||
+            parsed.contains("assistant_response_allowed") ||
+            parsed.contains("final_answer_allowed") ||
+            parsed.contains("required_tool_arguments_json") ||
+            parsed.contains("next_action_0_params_json")) {
+            return parsed;
+        }
+    }
+
+    return json::object();
+}
+
+void populate_next_action_from_continuation_payload(
+        chat_supervision_verdict & verdict,
+        const json & payload) {
+    if (payload.contains("next_action_0_tool_name") && payload.at("next_action_0_tool_name").is_string()) {
+        verdict.next_action_0_tool_name = payload.at("next_action_0_tool_name").get<std::string>();
+    }
+    if (payload.contains("next_action_0_safety_class") && payload.at("next_action_0_safety_class").is_string()) {
+        verdict.next_action_0_safety_class = payload.at("next_action_0_safety_class").get<std::string>();
+    }
+    if (payload.contains("next_action_0_params_json") && payload.at("next_action_0_params_json").is_string()) {
+        try {
+            json parsed = json::parse(payload.at("next_action_0_params_json").get<std::string>());
+            if (parsed.is_object()) {
+                verdict.next_action_0_params = parsed;
+            }
+        } catch (...) {
+        }
+    }
+
+    auto load_from_call = [&](const json & call) {
+        if (!call.is_object()) {
+            return;
+        }
+        if (verdict.next_action_0_tool_name.empty()) {
+            verdict.next_action_0_tool_name = call.value("tool", call.value("name", ""));
+        }
+        if (verdict.next_action_0_safety_class.empty()) {
+            verdict.next_action_0_safety_class = "READ_ONLY";
+        }
+        if ((!verdict.next_action_0_params.is_object() || verdict.next_action_0_params.empty()) &&
+            call.contains("params") && call.at("params").is_object()) {
+            verdict.next_action_0_params = call.at("params");
+        } else if ((!verdict.next_action_0_params.is_object() || verdict.next_action_0_params.empty()) &&
+                   call.contains("arguments") && call.at("arguments").is_object()) {
+            verdict.next_action_0_params = call.at("arguments");
+        }
+    };
+
+    if (payload.contains("next_call_json")) {
+        const json & next_call = payload.at("next_call_json");
+        if (next_call.is_object()) {
+            load_from_call(next_call);
+        } else if (next_call.is_string()) {
+            try {
+                load_from_call(json::parse(next_call.get<std::string>()));
+            } catch (...) {
+            }
+        }
+    }
+
+    if (payload.contains("required_tool_arguments_json") && payload.at("required_tool_arguments_json").is_string()) {
+        try {
+            load_from_call(json::parse(payload.at("required_tool_arguments_json").get<std::string>()));
+        } catch (...) {
+        }
+    }
+}
+
+void populate_first_next_action(chat_supervision_verdict & verdict, const json & body) {
+    verdict.next_action_0_tool_name = body.value("next_action_0_tool_name", "");
+    verdict.next_action_0_safety_class = body.value("next_action_0_safety_class", "");
+
+    if (body.contains("next_action_0_params") && body.at("next_action_0_params").is_object()) {
+        verdict.next_action_0_params = body.at("next_action_0_params");
+        return;
+    }
+
+    const std::string params_json = body.value("next_action_0_params_json", "");
+    if (params_json.empty()) {
+        return;
+    }
+
+    try {
+        json parsed = json::parse(params_json);
+        if (parsed.is_object()) {
+            verdict.next_action_0_params = parsed;
+        }
+    } catch (const std::exception &) {
+        verdict.next_action_0_params = json::object();
+    }
+}
+
 chat_supervision_verdict evaluate_request_supervision(const json & body) {
     chat_supervision_verdict verdict;
+    verdict.clips_first_decision = get_clips_first_decision(body);
+    const json continuation_payload = find_tool_continuation_payload(body);
     const json admission_summary = body.value("admission_summary", json::object());
     const json approved_context = body.value("approved_context", json::array());
 
     verdict.supervised =
+        !verdict.clips_first_decision.empty() ||
+        !continuation_payload.empty() ||
         body.contains("rag_request_id") ||
         body.contains("rag_trace_id") ||
         !admission_summary.empty() ||
@@ -144,6 +285,113 @@ chat_supervision_verdict evaluate_request_supervision(const json & body) {
 
     if (!verdict.supervised) {
         return verdict;
+    }
+
+    populate_first_next_action(verdict, body);
+    if (!continuation_payload.empty()) {
+        if (verdict.clips_first_decision.empty()) {
+            verdict.clips_first_decision = continuation_payload.value("clips_first_decision", "");
+        }
+        populate_next_action_from_continuation_payload(verdict, continuation_payload);
+    }
+
+    if (!verdict.clips_first_decision.empty()) {
+        verdict.dominant_decision = verdict.clips_first_decision;
+        if (verdict.clips_first_decision == "complete") {
+            verdict.model_response_allowed = true;
+            verdict.supervision_state = "APPROVED";
+            verdict.execution_disposition = "FINALIZE_ANSWER";
+            verdict.reason = "CLIPS_FIRST_DECISION_COMPLETE";
+            verdict.route = "closed_loop_complete";
+            return verdict;
+        }
+
+        verdict.model_response_allowed = false;
+        verdict.service_report_allowed = true;
+
+        if (verdict.clips_first_decision == "continue") {
+            verdict.supervision_state = "IN_PROGRESS";
+            verdict.execution_disposition = "CONTINUE_EXECUTION";
+            verdict.failure_mode = "CLIPS_FIRST_DECISION_CONTINUE";
+            verdict.reason = "CLIPS_FIRST_DECISION_REQUIRES_NEXT_ACTION";
+            verdict.route = "closed_loop_continue";
+            return verdict;
+        }
+
+        if (verdict.clips_first_decision == "alarm") {
+            const json clips_first = body.value("clips_first_decision", json::object());
+            verdict.supervision_state = "BLOCKED_BY_POLICY";
+            verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+            verdict.failure_mode = clips_first.value("alarm_code", clips_first.value("failure_mode", "CLIPS_FIRST_DECISION_ALARM"));
+            verdict.reason = clips_first.value("alarm_message", clips_first.value("reason", "CLIPS_FIRST_DECISION_RAISED_ALARM"));
+            verdict.route = "alarm";
+            return verdict;
+        }
+    }
+
+    if (!continuation_payload.empty()) {
+        const std::string continuation_status = continuation_payload.value("status", "");
+        const std::string acceptance_status = continuation_payload.value("acceptance_status", "");
+        const bool continue_required = get_bool_or_default(continuation_payload, "continue_required", false) ||
+            get_bool_or_default(continuation_payload, "auto_continue_required", false);
+        const bool assistant_response_allowed = get_bool_or_default(continuation_payload, "assistant_response_allowed", true);
+        const bool final_answer_allowed = get_bool_or_default(continuation_payload, "final_answer_allowed", true);
+        const bool supervision_alarm = get_bool_or_default(continuation_payload, "supervision_alarm", false);
+
+        verdict.route = continuation_payload.value("route_target", verdict.route);
+        verdict.dominant_decision = continuation_payload.value("clips_first_decision", verdict.dominant_decision);
+
+        if (supervision_alarm || continuation_status == "failed") {
+            verdict.model_response_allowed = false;
+            verdict.service_report_allowed = true;
+            verdict.supervision_state = "BLOCKED_BY_POLICY";
+            verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+            verdict.failure_mode = continuation_payload.value("supervision_alarm_code",
+                continuation_payload.value("error_code",
+                continuation_payload.value("status_code", "MCP_TOOL_RESULT_FAILED")));
+            verdict.reason = continuation_payload.value("supervision_alarm_message",
+                continuation_payload.value("error_message",
+                continuation_payload.value("error", "MCP tool result failed")));
+            return verdict;
+        }
+
+        if (continuation_status == "needs_continue" ||
+            acceptance_status == "continue" ||
+            continue_required ||
+            !assistant_response_allowed ||
+            !final_answer_allowed) {
+            verdict.model_response_allowed = false;
+            verdict.service_report_allowed = true;
+            verdict.supervision_state = "IN_PROGRESS";
+            verdict.execution_disposition = "CONTINUE_EXECUTION";
+            verdict.failure_mode = continuation_payload.value("status_code", "MCP_TOOL_RESULT_CONTINUE_REQUIRED");
+            verdict.reason = continuation_payload.value("clips_first_reason",
+                continuation_payload.value("acceptance_reason",
+                continuation_payload.value("next_action", "MCP tool result requires continuation")));
+            verdict.route = "closed_loop_continue";
+            if (verdict.dominant_decision.empty()) {
+                verdict.dominant_decision = "continue";
+            }
+            if (verdict.clips_first_decision.empty()) {
+                verdict.clips_first_decision = "continue";
+            }
+            return verdict;
+        }
+
+        if (continuation_status == "success" && final_answer_allowed) {
+            verdict.model_response_allowed = true;
+            verdict.supervision_state = "APPROVED";
+            verdict.execution_disposition = "FINALIZE_ANSWER";
+            verdict.reason = continuation_payload.value("summary", "MCP_TOOL_RESULT_COMPLETE");
+            verdict.route = "closed_loop_complete";
+            if (verdict.dominant_decision.empty()) {
+                verdict.dominant_decision = "complete";
+            }
+            if (verdict.clips_first_decision.empty()) {
+                verdict.clips_first_decision = "complete";
+            }
+            return verdict;
+        }
     }
 
     verdict.route = admission_summary.value("route", "");
@@ -203,6 +451,15 @@ chat_supervision_verdict evaluate_output_supervision(
         return verdict;
     }
 
+    if (verdict.clips_first_decision == "complete") {
+        verdict.supervision_state = "APPROVED";
+        verdict.execution_disposition = "FINALIZE_ANSWER";
+        verdict.reason = "CLIPS_FIRST_DECISION_COMPLETE";
+        verdict.route = "closed_loop_complete";
+        verdict.dominant_decision = "complete";
+        return verdict;
+    }
+
     const std::string decision = output_validation.value("decision", "");
     const std::string status = output_validation.value("status", "");
     const std::string reason = output_validation.value("reason", "");
@@ -235,23 +492,279 @@ chat_supervision_verdict evaluate_output_supervision(
 json build_supervision_json(const chat_supervision_verdict & verdict) {
     json result = to_json(to_supervision_envelope(verdict));
     result["service_report_allowed"] = verdict.service_report_allowed;
+    result["clips_first_decision"] = verdict.clips_first_decision;
+    if (!verdict.next_action_0_tool_name.empty()) {
+        result["next_action_0_tool_name"] = verdict.next_action_0_tool_name;
+    }
+    if (!verdict.next_action_0_safety_class.empty()) {
+        result["next_action_0_safety_class"] = verdict.next_action_0_safety_class;
+    }
+    if (verdict.next_action_0_params.is_object() && !verdict.next_action_0_params.empty()) {
+        result["next_action_0_params"] = verdict.next_action_0_params;
+    }
     return result;
 }
 
 std::string build_supervision_status_message(const chat_supervision_verdict & verdict) {
+    if (verdict.clips_first_decision == "continue") {
+        if (!verdict.next_action_0_tool_name.empty()) {
+            return "Supervision blocked releasing a model answer. The service is continuing the closed loop by executing next_action_0.";
+        }
+        return "Supervision blocked releasing a model answer because clips_first_decision requested continue, but no executable next_action_0 was available.";
+    }
     if (verdict.execution_disposition == "CONTINUE_EXECUTION") {
         return "Supervision blocked releasing a model answer because the request still requires repair or further execution before completion.";
     }
     return "Supervision blocked releasing the model answer. The service is returning a status report instead of model-generated natural language.";
 }
 
+json extract_continuation_payload_from_tool_result(const json & result) {
+    if (!result.is_object()) {
+        return json::object();
+    }
+
+    if (result.contains("status") ||
+        result.contains("next_call_json") ||
+        result.contains("continue_required") ||
+        result.contains("clips_first_decision") ||
+        result.contains("assistant_response_allowed") ||
+        result.contains("final_answer_allowed") ||
+        result.contains("required_tool_arguments_json") ||
+        result.contains("next_action_0_params_json")) {
+        return result;
+    }
+
+    if (result.contains("plain_text_response") && result.at("plain_text_response").is_string()) {
+        json parsed = parse_direct_payload(result.at("plain_text_response").get<std::string>());
+        if (parsed.is_object() && !parsed.empty()) {
+            return parsed;
+        }
+    }
+
+    return json::object();
+}
+
+bool continuation_payload_requires_continue(const json & payload) {
+    if (!payload.is_object() || payload.empty()) {
+        return false;
+    }
+    const std::string continuation_status = payload.value("status", "");
+    const std::string acceptance_status = payload.value("acceptance_status", "");
+    const bool continue_required = get_bool_or_default(payload, "continue_required", false) ||
+        get_bool_or_default(payload, "auto_continue_required", false);
+    const bool assistant_response_allowed = get_bool_or_default(payload, "assistant_response_allowed", true);
+    const bool final_answer_allowed = get_bool_or_default(payload, "final_answer_allowed", true);
+    return continuation_status == "needs_continue" ||
+        acceptance_status == "continue" ||
+        continue_required ||
+        !assistant_response_allowed ||
+        !final_answer_allowed;
+}
+
+bool continuation_payload_failed(const json & payload) {
+    if (!payload.is_object() || payload.empty()) {
+        return false;
+    }
+    return get_bool_or_default(payload, "supervision_alarm", false) ||
+        payload.value("status", "") == "failed" ||
+        (payload.contains("error") && !payload.at("error").is_null() && payload.at("error") != "");
+}
+
+void apply_continuation_payload_to_verdict(
+        chat_supervision_verdict & verdict,
+        const json & payload) {
+    if (!payload.is_object() || payload.empty()) {
+        return;
+    }
+
+    if (payload.contains("clips_first_decision") && payload.at("clips_first_decision").is_string()) {
+        verdict.clips_first_decision = payload.at("clips_first_decision").get<std::string>();
+    }
+
+    if (continuation_payload_failed(payload)) {
+        verdict.model_response_allowed = false;
+        verdict.service_report_allowed = true;
+        verdict.supervision_state = "BLOCKED_BY_POLICY";
+        verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+        verdict.failure_mode = payload.value("supervision_alarm_code",
+            payload.value("error_code",
+            payload.value("status_code", "MCP_TOOL_RESULT_FAILED")));
+        verdict.reason = payload.value("supervision_alarm_message",
+            payload.value("error_message",
+            payload.value("error", "MCP tool result failed")));
+        return;
+    }
+
+    if (continuation_payload_requires_continue(payload)) {
+        verdict.model_response_allowed = false;
+        verdict.service_report_allowed = true;
+        verdict.supervision_state = "IN_PROGRESS";
+        verdict.execution_disposition = "CONTINUE_EXECUTION";
+        verdict.failure_mode = payload.value("status_code", "MCP_TOOL_RESULT_CONTINUE_REQUIRED");
+        verdict.reason = payload.value("clips_first_reason",
+            payload.value("acceptance_reason",
+            payload.value("next_action", "MCP tool result requires continuation")));
+        verdict.route = "closed_loop_continue";
+        if (verdict.dominant_decision.empty()) {
+            verdict.dominant_decision = "continue";
+        }
+        if (verdict.clips_first_decision.empty()) {
+            verdict.clips_first_decision = "continue";
+        }
+        populate_next_action_from_continuation_payload(verdict, payload);
+        return;
+    }
+
+    const std::string continuation_status = payload.value("status", "");
+    const bool final_answer_allowed = get_bool_or_default(payload, "final_answer_allowed", true);
+    if (continuation_status == "success" && final_answer_allowed) {
+        verdict.model_response_allowed = true;
+        verdict.service_report_allowed = false;
+        verdict.supervision_state = "APPROVED";
+        verdict.execution_disposition = "FINALIZE_ANSWER";
+        verdict.failure_mode.clear();
+        verdict.reason = payload.value("summary", "MCP_TOOL_RESULT_COMPLETE");
+        verdict.route = "closed_loop_complete";
+        verdict.dominant_decision = "complete";
+        verdict.clips_first_decision = "complete";
+    }
+}
+
+json maybe_execute_first_continue_action(
+        const common_params & params,
+        chat_supervision_verdict & verdict) {
+    const bool should_continue =
+        verdict.clips_first_decision == "continue" ||
+        (verdict.execution_disposition == "CONTINUE_EXECUTION" && !verdict.next_action_0_tool_name.empty());
+    if (!should_continue) {
+        return json();
+    }
+
+    json execution_chain = json::array();
+    for (int step = 0; step < 1024; ++step) {
+        if (verdict.next_action_0_tool_name.empty()) {
+            verdict.supervision_state = "FAILED";
+            verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+            verdict.failure_mode = "NEXT_ACTION_0_TOOL_NAME_MISSING";
+            verdict.reason = "continuation was requested but next_action_0_tool_name is missing";
+            return json{
+                {"error", verdict.reason},
+                {"failure_mode", verdict.failure_mode},
+                {"continuation_execution_chain", execution_chain},
+            };
+        }
+
+        const std::string tool_name = verdict.next_action_0_tool_name;
+        const json tool_params = verdict.next_action_0_params;
+        const std::string safety_class = verdict.next_action_0_safety_class.empty()
+            ? "READ_ONLY"
+            : verdict.next_action_0_safety_class;
+        if (safety_class != "READ_ONLY") {
+            verdict.supervision_state = "NEEDS_HUMAN_REVIEW";
+            verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+            verdict.failure_mode = "NEXT_ACTION_0_REQUIRES_HUMAN_APPROVAL";
+            verdict.reason = "next_action_0 safety_class is not READ_ONLY";
+            return json{
+                {"tool_name", tool_name},
+                {"safety_class", safety_class},
+                {"error", verdict.reason},
+                {"failure_mode", verdict.failure_mode},
+                {"continuation_execution_chain", execution_chain},
+            };
+        }
+
+        if (!tool_params.is_object() || tool_params.empty()) {
+            verdict.supervision_state = "FAILED";
+            verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+            verdict.failure_mode = "NEXT_ACTION_0_PARAMS_MISSING";
+            verdict.reason = "continuation was requested but next_action_0 params are missing";
+            return json{
+                {"tool_name", tool_name},
+                {"safety_class", safety_class},
+                {"error", verdict.reason},
+                {"failure_mode", verdict.failure_mode},
+                {"continuation_execution_chain", execution_chain},
+            };
+        }
+
+        if (params.server_tools.empty()) {
+            verdict.supervision_state = "FAILED";
+            verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+            verdict.failure_mode = "SERVER_TOOLS_NOT_ENABLED";
+            verdict.reason = "cannot execute next_action_0 because built-in tools are not enabled";
+            return json{
+                {"tool_name", tool_name},
+                {"safety_class", safety_class},
+                {"params", tool_params},
+                {"error", verdict.reason},
+                {"failure_mode", verdict.failure_mode},
+                {"continuation_execution_chain", execution_chain},
+            };
+        }
+
+        server_tools tools;
+        tools.setup(params.server_tools);
+        SRV_INF("continuation_execute: step=%d tool='%s'\n", step, tool_name.c_str());
+        json result = tools.invoke(tool_name, tool_params);
+        execution_chain.push_back(json{
+            {"step", step},
+            {"tool_name", tool_name},
+            {"safety_class", safety_class},
+            {"params", tool_params},
+            {"result", result},
+        });
+
+        if (result.is_object() && result.contains("error") && !result.at("error").is_null()) {
+            verdict.supervision_state = "FAILED";
+            verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+            verdict.failure_mode = "NEXT_ACTION_0_EXECUTION_FAILED";
+            verdict.reason = "next_action_0 execution failed";
+            return json{
+                {"tool_name", tool_name},
+                {"safety_class", safety_class},
+                {"params", tool_params},
+                {"result", result},
+                {"continuation_execution_chain", execution_chain},
+            };
+        }
+
+        const json continuation_payload = extract_continuation_payload_from_tool_result(result);
+        if (!continuation_payload.empty()) {
+            apply_continuation_payload_to_verdict(verdict, continuation_payload);
+            if (continuation_payload_requires_continue(continuation_payload) &&
+                !verdict.next_action_0_tool_name.empty()) {
+                continue;
+            }
+        }
+
+        return json{
+            {"tool_name", tool_name},
+            {"safety_class", safety_class},
+            {"params", tool_params},
+            {"result", result},
+            {"continuation_execution_chain", execution_chain},
+        };
+    }
+
+    verdict.supervision_state = "FAILED";
+    verdict.execution_disposition = "RETURN_FAILURE_REPORT";
+    verdict.failure_mode = "NEXT_ACTION_0_CONTINUATION_TOO_DEEP";
+    verdict.reason = "continuation execution exceeded max steps";
+    return json{
+        {"error", verdict.reason},
+        {"failure_mode", verdict.failure_mode},
+        {"continuation_execution_chain", execution_chain},
+    };
+}
+
 json build_supervision_blocked_chat_response(
         const std::string & model_name,
         const json & body,
-        const chat_supervision_verdict & verdict) {
+        const chat_supervision_verdict & verdict,
+        const json & next_action_execution = json()) {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     const auto created = std::chrono::duration_cast<std::chrono::seconds>(now).count();
-    return json{
+    json response = json{
         {"id", gen_chatcmplid()},
         {"object", "chat.completion"},
         {"created", created},
@@ -273,6 +786,10 @@ json build_supervision_blocked_chat_response(
         {"admission_summary", body.value("admission_summary", json::object())},
         {"supervision", build_supervision_json(verdict)},
     };
+    if (next_action_execution.is_object() && !next_action_execution.empty()) {
+        response["next_action_0_execution"] = next_action_execution;
+    }
+    return response;
 }
 
 std::string extract_completion_text(const json & payload) {
@@ -2690,6 +3207,167 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
     return res;
 }
 
+std::unique_ptr<server_res_generator> server_routes::handle_chat_with_builtin_tool_loop(
+            const server_http_req & req,
+            json body,
+            task_response_type res_type) {
+    if ((res_type != TASK_RESPONSE_TYPE_OAI_CHAT && res_type != TASK_RESPONSE_TYPE_OAI_RESP) ||
+        json_value(body, "stream", false) ||
+        params.server_tools.empty() ||
+        !body.contains("tools") ||
+        !body.at("tools").is_array() ||
+        body.at("tools").empty()) {
+        std::vector<raw_buffer> files;
+        json body_parsed = oaicompat_chat_params_parse(body, meta->chat_params, files);
+        propagate_rag_request_fields(body, body_parsed);
+        return handle_completions_impl(
+            req,
+            SERVER_TASK_TYPE_COMPLETION,
+            body_parsed,
+            files,
+            res_type);
+    }
+
+    if (!body.contains("messages") || !body.at("messages").is_array()) {
+        auto res = create_response();
+        res->error(format_error_response("'messages' must be an array for native tool loop", ERROR_TYPE_INVALID_REQUEST));
+        return res;
+    }
+
+    server_tools tools;
+    tools.setup(params.server_tools);
+
+    constexpr int SERVER_NATIVE_TOOL_LOOP_MAX_STEPS = 128;
+    for (int step = 0; step < SERVER_NATIVE_TOOL_LOOP_MAX_STEPS; ++step) {
+        std::vector<raw_buffer> files;
+        json body_parsed = oaicompat_chat_params_parse(body, meta->chat_params, files);
+        propagate_rag_request_fields(body, body_parsed);
+
+        auto model_res = handle_completions_impl(
+            req,
+            SERVER_TASK_TYPE_COMPLETION,
+            body_parsed,
+            files,
+            res_type);
+        if (!model_res || model_res->status != 200 || model_res->is_stream()) {
+            return model_res;
+        }
+
+        json response_json = json::parse(model_res->data);
+        json message = json::object();
+        json tool_calls = json::array();
+        if (res_type == TASK_RESPONSE_TYPE_OAI_RESP) {
+            const json output_items = response_json.value("output", json::array());
+            if (!output_items.is_array()) {
+                return model_res;
+            }
+
+            json content_parts = json::array();
+            for (const auto & item : output_items) {
+                if (!item.is_object()) {
+                    continue;
+                }
+                const std::string item_type = item.value("type", "");
+                if (item_type == "message" && item.value("role", "") == "assistant") {
+                    const json content = item.value("content", json::array());
+                    if (content.is_array()) {
+                        for (const auto & part : content) {
+                            if (!part.is_object()) {
+                                continue;
+                            }
+                            if (part.value("type", "") == "output_text" && part.contains("text")) {
+                                content_parts.push_back(json{
+                                    {"type", "text"},
+                                    {"text", part.value("text", "")},
+                                });
+                            }
+                        }
+                    }
+                } else if (item_type == "function_call") {
+                    tool_calls.push_back(json{
+                        {"id", item.value("call_id", "")},
+                        {"type", "function"},
+                        {"function", {
+                            {"name", item.value("name", "")},
+                            {"arguments", item.value("arguments", "")},
+                        }},
+                    });
+                }
+            }
+            message = json{
+                {"role", "assistant"},
+                {"content", content_parts.empty() ? json("") : content_parts},
+            };
+            if (!tool_calls.empty()) {
+                message["tool_calls"] = tool_calls;
+            }
+        } else {
+            const json choices = response_json.value("choices", json::array());
+            if (!choices.is_array() || choices.empty() || !choices[0].is_object()) {
+                return model_res;
+            }
+            message = choices[0].value("message", json::object());
+            tool_calls = message.value("tool_calls", json::array());
+        }
+
+        if (!tool_calls.is_array() || tool_calls.empty()) {
+            return model_res;
+        }
+
+        SRV_INF("native_tool_loop: model_step=%d tool_calls=%zu\n", step, tool_calls.size());
+
+        json assistant_message = {
+            {"role", "assistant"},
+            {"content", message.contains("content") ? message.at("content") : json("")},
+        };
+        if (message.contains("tool_calls")) {
+            assistant_message["tool_calls"] = message.at("tool_calls");
+        }
+        if (message.contains("reasoning_content")) {
+            assistant_message["reasoning_content"] = message.at("reasoning_content");
+        }
+        body["messages"].push_back(assistant_message);
+
+        for (const auto & tool_call : tool_calls) {
+            if (!tool_call.is_object()) {
+                continue;
+            }
+
+            const std::string tool_call_id = tool_call.value("id", gen_tool_call_id());
+            const json function = tool_call.value("function", json::object());
+            const std::string tool_name = function.value("name", "");
+            json tool_params = json::object();
+
+            if (function.contains("arguments") && function.at("arguments").is_string()) {
+                try {
+                    json parsed = json::parse(function.at("arguments").get<std::string>());
+                    if (parsed.is_object()) {
+                        tool_params = std::move(parsed);
+                    }
+                } catch (const std::exception & e) {
+                    tool_params = json{
+                        {"_argument_parse_error", e.what()},
+                    };
+                }
+            }
+
+            SRV_INF("native_tool_loop: executing tool_call_id='%s' tool='%s'\n",
+                tool_call_id.c_str(),
+                tool_name.c_str());
+            json tool_result = tools.invoke(tool_name, tool_params);
+            body["messages"].push_back(json{
+                {"role", "tool"},
+                {"tool_call_id", tool_call_id},
+                {"content", safe_json_to_str(tool_result)},
+            });
+        }
+    }
+
+    auto res = create_response();
+    res->error(format_error_response("native tool loop exceeded max steps", ERROR_TYPE_SERVER));
+    return res;
+}
+
 std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
             const server_http_req & req,
             const json & request_body,
@@ -2753,13 +3431,15 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
 
         const chat_supervision_verdict supervision_verdict = evaluate_request_supervision(body);
         if (supervision_verdict.supervised && !supervision_verdict.model_response_allowed) {
+            chat_supervision_verdict mutable_verdict = supervision_verdict;
+            const json next_action_execution = maybe_execute_first_continue_action(params, mutable_verdict);
             const std::string result_ref = get_string_or_empty(body, "result_ref").empty()
                 ? ("session:" + session_id + "/turn:" + turn_id)
                 : get_string_or_empty(body, "result_ref");
             const std::string evidence_ref = get_string_or_empty(body, "evidence_ref").empty()
                 ? result_ref
                 : get_string_or_empty(body, "evidence_ref");
-            const json response_json = build_supervision_blocked_chat_response(meta->model_name, body, supervision_verdict);
+            const json response_json = build_supervision_blocked_chat_response(meta->model_name, body, mutable_verdict, next_action_execution);
             json normalized = build_ventriloquy_result(response_json, session_id, turn_id, write_mode);
             const json messages = body["messages"];
             const std::string user_text = messages.empty()
@@ -2787,15 +3467,15 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
                 {"context_refs", get_array_or_empty(body, "context_refs")},
                 {"tool_availability_snapshot", tool_availability_snapshot},
                 {"user_text", user_text},
-                {"assistant_text", build_supervision_status_message(supervision_verdict)},
-                {"summary", build_supervision_status_message(supervision_verdict)},
+                {"assistant_text", build_supervision_status_message(mutable_verdict)},
+                {"summary", build_supervision_status_message(mutable_verdict)},
                 {"direct_answer", normalized.value("direct_answer", "")},
                 {"next_action", normalized.value("next_action", "")},
                 {"confidence", normalized.value("confidence", "blocked")},
                 {"result_ref", result_ref},
                 {"evidence_ref", evidence_ref},
                 {"admission_summary", body.value("admission_summary", json::object())},
-                {"supervision", build_supervision_json(supervision_verdict)},
+                {"supervision", build_supervision_json(mutable_verdict)},
                 {"timings", json{
                     {"build_messages_ms", build_messages_ms},
                     {"model_completion_ms", 0},
@@ -2815,7 +3495,10 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
             normalized["result_ref"] = result_ref;
             normalized["evidence_ref"] = evidence_ref;
             normalized["admission_summary"] = body.value("admission_summary", json::object());
-            normalized["supervision"] = build_supervision_json(supervision_verdict);
+            normalized["supervision"] = build_supervision_json(mutable_verdict);
+            if (next_action_execution.is_object() && !next_action_execution.empty()) {
+                normalized["next_action_0_execution"] = next_action_execution;
+            }
             normalized["provider_id"] = get_string_or_empty(persisted_turn, "provider_id");
             normalized["capability_id"] = get_string_or_empty(persisted_turn, "capability_id");
             normalized["slice_id"] = get_string_or_empty(persisted_turn, "slice_id");
@@ -2835,7 +3518,8 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
                 {"query_id", body.value("rag_query_id", body.value("query_id", ""))},
                 {"admission_summary", body.value("admission_summary", json::object())},
                 {"approved_context", body.value("approved_context", json::array())},
-                {"supervision", build_supervision_json(supervision_verdict)},
+                {"supervision", build_supervision_json(mutable_verdict)},
+                {"next_action_0_execution", next_action_execution},
             });
 
             res->ok(normalized);
@@ -3410,7 +4094,6 @@ void server_routes::init_routes() {
 
 this->post_chat_completions = [this](const server_http_req & req) {
     auto res = create_response();
-    std::vector<raw_buffer> files;
     json body = json::parse(req.body);
 
     std::string rag_error;
@@ -3432,6 +4115,8 @@ this->post_chat_completions = [this](const server_http_req & req) {
     record_injected_rag_stage(body);
     const chat_supervision_verdict supervision_verdict = evaluate_request_supervision(body);
     if (supervision_verdict.supervised && !supervision_verdict.model_response_allowed) {
+        chat_supervision_verdict mutable_verdict = supervision_verdict;
+        const json next_action_execution = maybe_execute_first_continue_action(params, mutable_verdict);
         const std::string trace_id = body.value("rag_trace_id", body.value("trace_id", ""));
         server_trace_registry::record_stage(trace_id, "supervision_gate_pre_model", json{
             {"trace_id", trace_id},
@@ -3441,23 +4126,16 @@ this->post_chat_completions = [this](const server_http_req & req) {
             {"supervision_override_mode", body.value("supervision_override_mode", "")},
             {"admission_summary", body.value("admission_summary", json::object())},
             {"approved_context", body.value("approved_context", json::array())},
-            {"supervision", build_supervision_json(supervision_verdict)},
+            {"supervision", build_supervision_json(mutable_verdict)},
+            {"next_action_0_execution", next_action_execution},
         });
-        res->ok(build_supervision_blocked_chat_response(meta->model_name, body, supervision_verdict));
+        res->ok(build_supervision_blocked_chat_response(meta->model_name, body, mutable_verdict, next_action_execution));
         return res;
     }
 
-    json body_parsed = oaicompat_chat_params_parse(
-        body,
-        meta->chat_params,
-        files);
-    propagate_rag_request_fields(body, body_parsed);
-
-    return handle_completions_impl(
+    return handle_chat_with_builtin_tool_loop(
         req,
-        SERVER_TASK_TYPE_COMPLETION,
-        body_parsed,
-        files,
+        body,
         TASK_RESPONSE_TYPE_OAI_CHAT);
 };
 
@@ -3537,6 +4215,8 @@ this->post_responses_oai = [this](const server_http_req & req) {
     record_injected_rag_stage(body);
     const chat_supervision_verdict supervision_verdict = evaluate_request_supervision(body);
     if (supervision_verdict.supervised && !supervision_verdict.model_response_allowed) {
+        chat_supervision_verdict mutable_verdict = supervision_verdict;
+        const json next_action_execution = maybe_execute_first_continue_action(params, mutable_verdict);
         const std::string trace_id = body.value("rag_trace_id", body.value("trace_id", ""));
         server_trace_registry::record_stage(trace_id, "supervision_gate_pre_model", json{
             {"trace_id", trace_id},
@@ -3546,9 +4226,10 @@ this->post_responses_oai = [this](const server_http_req & req) {
             {"supervision_override_mode", body.value("supervision_override_mode", "")},
             {"admission_summary", body.value("admission_summary", json::object())},
             {"approved_context", body.value("approved_context", json::array())},
-            {"supervision", build_supervision_json(supervision_verdict)},
+            {"supervision", build_supervision_json(mutable_verdict)},
+            {"next_action_0_execution", next_action_execution},
         });
-        res->ok(build_supervision_blocked_chat_response(meta->model_name, body, supervision_verdict));
+        res->ok(build_supervision_blocked_chat_response(meta->model_name, body, mutable_verdict, next_action_execution));
         return res;
     }
 
@@ -3561,11 +4242,9 @@ this->post_responses_oai = [this](const server_http_req & req) {
         files);
     propagate_rag_request_fields(body, body_parsed);
 
-    return handle_completions_impl(
+    return handle_chat_with_builtin_tool_loop(
         req,
-        SERVER_TASK_TYPE_COMPLETION,
-        body_parsed,
-        files,
+        body,
         TASK_RESPONSE_TYPE_OAI_RESP);
 };
 

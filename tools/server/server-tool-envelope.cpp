@@ -17,7 +17,7 @@ uint64_t fnv1a64(const std::string & text) {
 
 std::string build_server_result_hash(const json & result) {
     std::ostringstream oss;
-    oss << std::hex << fnv1a64(result.dump());
+    oss << std::hex << fnv1a64(safe_json_to_str(result));
     return "fnv1a64:" + oss.str();
 }
 

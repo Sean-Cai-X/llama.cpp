@@ -45,6 +45,9 @@ server_goal_envelope parse_server_goal_envelope(const json & body) {
     goal.include_patterns = read_string_list(goal_body, "include", {"**/*.cpp", "**/*.h", "**/*.hpp", "**/*.c", "**/*.cc"});
     goal.exclude_patterns = read_string_list(goal_body, "exclude", {"**/build/**", "**/.git/**", "**/vendor/**"});
     goal.read_chunk_lines = std::max(1, goal_body.value("read_chunk_lines", 500));
+    if (goal_body.contains("test_acceptance_snapshot") && goal_body.at("test_acceptance_snapshot").is_object()) {
+        goal.test_acceptance_snapshot = goal_body.at("test_acceptance_snapshot");
+    }
 
     return goal;
 }

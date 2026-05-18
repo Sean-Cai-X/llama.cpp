@@ -16,6 +16,7 @@ struct server_goal_envelope {
     std::vector<std::string> include_patterns;
     std::vector<std::string> exclude_patterns;
     int read_chunk_lines = 500;
+    json test_acceptance_snapshot = nullptr;
 };
 
 struct server_goal_progress {

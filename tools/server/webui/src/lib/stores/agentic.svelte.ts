@@ -119,8 +119,27 @@ function toAgenticMessages(messages: ApiChatMessageData[]): AgenticMessage[] {
 	});
 }
 
+type ContinuationPayload = {
+	status?: string;
+	continue_required?: boolean;
+	auto_continue_required?: boolean;
+	assistant_response_allowed?: boolean;
+	final_answer_allowed?: boolean;
+	next_call_json?: unknown;
+	required_tool_arguments_json?: unknown;
+	next_action_0_tool_name?: string;
+	next_action_0_params_json?: string;
+};
+
+type ContinuationExecutionResult = {
+	content: string;
+	attachments: DatabaseMessageExtra[];
+	executedCalls: number;
+};
+
 class AgenticStore {
 	private _sessions = $state<Map<string, AgenticSession>>(new Map());
+	private static readonly MAX_CONTINUATION_STEPS = 1024;
 
 	get isReady(): boolean {
 		return true;
@@ -484,67 +503,41 @@ class AgenticStore {
 					onFlowComplete?.(this.buildFinalTimings(capturedTimings, agenticTimings));
 					return;
 				}
-
-				const toolStartTime = performance.now();
-				const mcpCall: MCPToolCall = {
-					id: toolCall.id,
-					function: { name: toolCall.function.name, arguments: toolCall.function.arguments }
-				};
-
-				let result: string;
-				let toolSuccess = true;
-
-				try {
-					const executionResult = await mcpStore.executeTool(mcpCall, signal);
-					result = executionResult.content;
-				} catch (error) {
-					if (isAbortError(error)) {
-						onFlowComplete?.(this.buildFinalTimings(capturedTimings, agenticTimings));
-						return;
-					}
-					result = `Error: ${error instanceof Error ? error.message : String(error)}`;
-					toolSuccess = false;
-				}
-
-				const toolDurationMs = performance.now() - toolStartTime;
-				const toolTiming: ChatMessageToolCallTiming = {
-					name: toolCall.function.name,
-					duration_ms: Math.round(toolDurationMs),
-					success: toolSuccess
-				};
-
-				agenticTimings.toolCalls!.push(toolTiming);
-				agenticTimings.toolCallsCount++;
-				agenticTimings.toolsMs += Math.round(toolDurationMs);
-				turnStats.toolCalls.push(toolTiming);
-				turnStats.toolsMs += Math.round(toolDurationMs);
+				const execution = await this.executeToolWithContinuation(
+					conversationId,
+					toolCall,
+					agenticTimings,
+					turnStats,
+					totalToolCallCount,
+					signal
+				);
+				totalToolCallCount += Math.max(0, execution.executedCalls - 1);
+				this.updateSession(conversationId, { totalToolCalls: totalToolCallCount });
 
 				if (signal?.aborted) {
 					onFlowComplete?.(this.buildFinalTimings(capturedTimings, agenticTimings));
 					return;
 				}
 
-				const { cleanedResult, attachments } = this.extractBase64Attachments(result);
-
 				// Create the tool result message in the DB
 				let toolResultMessage: DatabaseMessage | undefined;
 				if (createToolResultMessage) {
 					toolResultMessage = await createToolResultMessage(
 						toolCall.id,
-						cleanedResult,
-						attachments.length > 0 ? attachments : undefined
+						execution.content,
+						execution.attachments.length > 0 ? execution.attachments : undefined
 					);
 				}
 
-				if (attachments.length > 0 && toolResultMessage) {
-					onAttachments?.(toolResultMessage.id, attachments);
+				if (execution.attachments.length > 0 && toolResultMessage) {
+					onAttachments?.(toolResultMessage.id, execution.attachments);
 				}
 
 				// Build content parts for session history (including images for vision models)
 				const contentParts: ApiChatMessageContentPart[] = [
-					{ type: ContentPartType.TEXT, text: cleanedResult }
+					{ type: ContentPartType.TEXT, text: execution.content }
 				];
-				for (const attachment of attachments) {
+				for (const attachment of execution.attachments) {
 					if (attachment.type === AttachmentType.IMAGE) {
 						if (modelsStore.modelSupportsVision(effectiveModel)) {
 							contentParts.push({
@@ -583,6 +576,91 @@ class AgenticStore {
 			undefined
 		);
 		onFlowComplete?.(this.buildFinalTimings(capturedTimings, agenticTimings));
+	}
+
+	private async executeToolWithContinuation(
+		conversationId: string,
+		toolCall: AgenticToolCallList[number],
+		agenticTimings: ChatMessageAgenticTimings,
+		turnStats: ChatMessageAgenticTurnStats,
+		totalToolCallCount: number,
+		signal?: AbortSignal
+	): Promise<ContinuationExecutionResult> {
+		let pendingCall: MCPToolCall | null = {
+			id: toolCall.id,
+			function: {
+				name: toolCall.function.name,
+				arguments: toolCall.function.arguments
+			}
+		};
+		let continuationIndex = 0;
+		let executedCalls = 0;
+		const resultChunks: string[] = [];
+		const attachments: DatabaseMessageExtra[] = [];
+
+		while (pendingCall && continuationIndex < AgenticStore.MAX_CONTINUATION_STEPS) {
+			const toolStartTime = performance.now();
+			let result = '';
+			let toolSuccess = true;
+
+			try {
+				const executionResult = await mcpStore.executeTool(pendingCall, signal);
+				result = executionResult.content;
+				toolSuccess = !executionResult.isError;
+			} catch (error) {
+				if (isAbortError(error)) {
+					throw error;
+				}
+				result = `Error: ${error instanceof Error ? error.message : String(error)}`;
+				toolSuccess = false;
+			}
+
+			const toolDurationMs = performance.now() - toolStartTime;
+			const toolTiming: ChatMessageToolCallTiming = {
+				name: pendingCall.function.name,
+				duration_ms: Math.round(toolDurationMs),
+				success: toolSuccess
+			};
+
+			agenticTimings.toolCalls!.push(toolTiming);
+			agenticTimings.toolCallsCount++;
+			agenticTimings.toolsMs += Math.round(toolDurationMs);
+			turnStats.toolCalls.push(toolTiming);
+			turnStats.toolsMs += Math.round(toolDurationMs);
+
+			executedCalls++;
+			if (executedCalls > 1) {
+				totalToolCallCount++;
+				this.updateSession(conversationId, { totalToolCalls: totalToolCallCount });
+			}
+
+			const extracted = this.extractBase64Attachments(result);
+			if (extracted.cleanedResult.trim()) {
+				resultChunks.push(extracted.cleanedResult);
+			}
+			attachments.push(...extracted.attachments);
+
+			if (!toolSuccess) {
+				pendingCall = null;
+				break;
+			}
+
+			pendingCall = this.extractContinuationToolCall(
+				extracted.cleanedResult,
+				`${toolCall.id}_cont_${continuationIndex + 1}`
+			);
+			continuationIndex++;
+		}
+
+		if (continuationIndex >= AgenticStore.MAX_CONTINUATION_STEPS) {
+			resultChunks.push('Error: MCP continuation exceeded max steps');
+		}
+
+		return {
+			content: resultChunks.join('\n\n'),
+			attachments,
+			executedCalls
+		};
 	}
 
 	private buildFinalTimings(
@@ -655,6 +733,171 @@ class AgenticStore {
 		const extension = IMAGE_MIME_TO_EXTENSION[mimeType] ?? DEFAULT_IMAGE_EXTENSION;
 
 		return `${MCP_ATTACHMENT_NAME_PREFIX}-${Date.now()}-${index}.${extension}`;
+	}
+
+	private extractContinuationToolCall(content: string, toolCallId: string): MCPToolCall | null {
+		const payload = this.parseContinuationPayload(content);
+		if (!this.requiresContinuation(payload)) {
+			return null;
+		}
+
+		const nextCall =
+			this.parseCallEnvelope(payload.next_call_json) ??
+			this.parseCallEnvelope(payload.required_tool_arguments_json) ??
+			this.parseNextActionCallEnvelope(payload);
+		if (!nextCall) {
+			return null;
+		}
+
+		return {
+			id: toolCallId,
+			function: {
+				name: nextCall.name,
+				arguments: JSON.stringify(nextCall.arguments)
+			}
+		};
+	}
+
+	private requiresContinuation(payload: ContinuationPayload): boolean {
+		const status = typeof payload.status === 'string' ? payload.status : '';
+		if (status === 'needs_continue') {
+			return true;
+		}
+
+		return (
+			this.parseBooleanish(payload.continue_required) ||
+			this.parseBooleanish(payload.auto_continue_required) ||
+			payload.assistant_response_allowed === false ||
+			payload.final_answer_allowed === false
+		);
+	}
+
+	private parseContinuationPayload(content: string): ContinuationPayload {
+		const trimmed = content.trim();
+		if (!trimmed) {
+			return {};
+		}
+
+		const parsedJson = this.parseJsonLike(trimmed);
+		if (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)) {
+			return parsedJson as ContinuationPayload;
+		}
+
+		const payload: Record<string, unknown> = {};
+		for (const line of trimmed.split(/\r?\n/)) {
+			const normalized = line.trim();
+			if (!normalized) {
+				continue;
+			}
+
+			const separatorIndex = normalized.indexOf('=');
+			if (separatorIndex <= 0) {
+				continue;
+			}
+
+			const key = normalized.slice(0, separatorIndex).trim();
+			const rawValue = normalized.slice(separatorIndex + 1).trim();
+			if (!key) {
+				continue;
+			}
+
+			const parsedValue = this.parseJsonLike(rawValue);
+			payload[key] = parsedValue ?? rawValue;
+		}
+
+		return payload as ContinuationPayload;
+	}
+
+	private parseNextActionCallEnvelope(
+		payload: ContinuationPayload
+	): { name: string; arguments: Record<string, unknown> } | null {
+		if (
+			typeof payload.next_action_0_tool_name !== 'string' ||
+			!payload.next_action_0_tool_name ||
+			typeof payload.next_action_0_params_json !== 'string'
+		) {
+			return null;
+		}
+
+		const parsed = this.parseJsonLike(payload.next_action_0_params_json);
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+			return null;
+		}
+
+		return {
+			name: payload.next_action_0_tool_name,
+			arguments: parsed as Record<string, unknown>
+		};
+	}
+
+	private parseCallEnvelope(
+		value: unknown
+	): { name: string; arguments: Record<string, unknown> } | null {
+		const parsed = this.parseJsonLike(value);
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+			return null;
+		}
+
+		const envelope = parsed as Record<string, unknown>;
+		const toolName =
+			typeof envelope.tool === 'string'
+				? envelope.tool
+				: typeof envelope.name === 'string'
+					? envelope.name
+					: '';
+		if (!toolName) {
+			return null;
+		}
+
+		const args =
+			envelope.params && typeof envelope.params === 'object' && !Array.isArray(envelope.params)
+				? (envelope.params as Record<string, unknown>)
+				: envelope.arguments &&
+					  typeof envelope.arguments === 'object' &&
+					  !Array.isArray(envelope.arguments)
+					? (envelope.arguments as Record<string, unknown>)
+					: {};
+
+		return { name: toolName, arguments: args };
+	}
+
+	private parseJsonLike(value: unknown): unknown {
+		if (typeof value !== 'string') {
+			return value;
+		}
+
+		const trimmed = value.trim();
+		if (!trimmed) {
+			return '';
+		}
+
+		const lowered = trimmed.toLowerCase();
+		if (lowered === 'true') {
+			return true;
+		}
+		if (lowered === 'false') {
+			return false;
+		}
+
+		try {
+			return JSON.parse(trimmed);
+		} catch {
+			return null;
+		}
+	}
+
+	private parseBooleanish(value: unknown): boolean {
+		if (typeof value === 'boolean') {
+			return value;
+		}
+		if (typeof value === 'string') {
+			const lowered = value.trim().toLowerCase();
+			return lowered === 'true' || lowered === '1' || lowered === 'yes' || lowered === 'on';
+		}
+		if (typeof value === 'number') {
+			return value !== 0;
+		}
+		return false;
 	}
 }
 

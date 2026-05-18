@@ -149,6 +149,11 @@ private:
             const json & data,
             const std::vector<raw_buffer> & files,
             task_response_type res_type);
+
+    std::unique_ptr<server_res_generator> handle_chat_with_builtin_tool_loop(
+            const server_http_req & req,
+            json body,
+            task_response_type res_type);
    
     std::unique_ptr<server_res_generator> handle_remote_session_turn(
             const server_http_req & req,
