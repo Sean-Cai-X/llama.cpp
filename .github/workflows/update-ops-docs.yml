@@ -1,4 +1,4 @@
-name: Update Operations Documentation
+﻿name: Update Operations Documentation
 
 on:
     push:
@@ -28,7 +28,7 @@ jobs:
         - name: Generate operations documentation to temporary file
           run: |
               mkdir -p /tmp/ops_check
-              ./scripts/create_ops_docs.py /tmp/ops_check/ops.md
+              python scripts/create_ops_docs.py /tmp/ops_check/ops.md
 
         - name: Check if docs/ops.md matches generated version
           run: |
