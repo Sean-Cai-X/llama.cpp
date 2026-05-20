@@ -24,6 +24,8 @@ public:
         const json & request_payload,
         const json & response_payload);
 
+    json enrich_session_projection(const json & session) const;
+
 private:
     std::string root_dir;
     std::string slices_dir;

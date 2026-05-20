@@ -12,6 +12,7 @@ export const SETTING_CONFIG_DEFAULT: Record<string, string | number | boolean | 
 	disableReasoningParsing: false,
 	excludeReasoningFromContext: false,
 	reasoningStrengthLevel: 'medium',
+	mcpAutoAuthorizeTools: true,
 	showRawOutputSwitch: false,
 	keepStatsVisible: false,
 	showMessageStats: true,
@@ -115,6 +116,8 @@ export const SETTING_CONFIG_INFO: Record<string, string> = {
 		'Strip thinking from previous messages before sending. When off, thinking is sent back via the reasoning_content field so the model sees its own chain-of-thought across turns.',
 	reasoningStrengthLevel:
 		'Preferred reasoning strength sent with chat requests. Low favors faster shallow decisions, Medium is balanced, High favors deeper structured conclusions.',
+	mcpAutoAuthorizeTools:
+		'Default MCP tool permission mode for new requests. When enabled, requests send auto_authorize=true and authorization_default=allow.',
 	showRawOutputSwitch:
 		'Show toggle button to display messages as plain text instead of Markdown-formatted content',
 	keepStatsVisible: 'Keep processing statistics visible after generation finishes.',

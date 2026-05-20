@@ -121,6 +121,11 @@ function toAgenticMessages(messages: ApiChatMessageData[]): AgenticMessage[] {
 
 type ContinuationPayload = {
 	status?: string;
+	acceptance_status?: string;
+	task_completion?: string;
+	batch_completion?: string;
+	content_read_completion?: string;
+	goal_status?: string;
 	continue_required?: boolean;
 	auto_continue_required?: boolean;
 	assistant_response_allowed?: boolean;
@@ -477,6 +482,9 @@ class AgenticStore {
 				onFlowComplete?.(this.buildFinalTimings(capturedTimings, agenticTimings));
 				return;
 			}
+			console.info(
+				`[AgenticStore] agentic_turn: tool_calls turn=${turn + 1} count=${normalizedCalls.length} names=${normalizedCalls.map((call) => call.function.name).join(',')}`
+			);
 
 			totalToolCallCount += normalizedCalls.length;
 			this.updateSession(conversationId, { totalToolCalls: totalToolCallCount });
@@ -503,6 +511,9 @@ class AgenticStore {
 					onFlowComplete?.(this.buildFinalTimings(capturedTimings, agenticTimings));
 					return;
 				}
+				console.info(
+					`[AgenticStore] agentic_turn: dispatch tool_call_id=${toolCall.id} tool=${toolCall.function.name}`
+				);
 				const execution = await this.executeToolWithContinuation(
 					conversationId,
 					toolCall,
@@ -513,6 +524,9 @@ class AgenticStore {
 				);
 				totalToolCallCount += Math.max(0, execution.executedCalls - 1);
 				this.updateSession(conversationId, { totalToolCalls: totalToolCallCount });
+				console.info(
+					`[AgenticStore] agentic_turn: completed tool_call_id=${toolCall.id} tool=${toolCall.function.name} executed_calls=${execution.executedCalls} result_bytes=${execution.content.length}`
+				);
 
 				if (signal?.aborted) {
 					onFlowComplete?.(this.buildFinalTimings(capturedTimings, agenticTimings));
@@ -555,7 +569,7 @@ class AgenticStore {
 				sessionMessages.push({
 					role: MessageRole.TOOL,
 					tool_call_id: toolCall.id,
-					content: contentParts.length === 1 ? cleanedResult : contentParts
+					content: contentParts.length === 1 ? execution.content : contentParts
 				});
 			}
 
@@ -565,6 +579,7 @@ class AgenticStore {
 				const intermediateTimings = this.buildFinalTimings(capturedTimings, agenticTimings);
 				if (intermediateTimings) onTurnComplete?.(intermediateTimings);
 			}
+
 		}
 
 		// Turn limit reached
@@ -604,15 +619,25 @@ class AgenticStore {
 			let toolSuccess = true;
 
 			try {
+				console.info(
+					`[AgenticStore] agentic_tool_execute: start step=${continuationIndex} tool=${pendingCall.function.name}`
+				);
 				const executionResult = await mcpStore.executeTool(pendingCall, signal);
 				result = executionResult.content;
 				toolSuccess = !executionResult.isError;
+				console.info(
+					`[AgenticStore] agentic_tool_execute: result step=${continuationIndex} tool=${pendingCall.function.name} success=${toolSuccess} bytes=${result.length}`
+				);
 			} catch (error) {
 				if (isAbortError(error)) {
 					throw error;
 				}
 				result = `Error: ${error instanceof Error ? error.message : String(error)}`;
 				toolSuccess = false;
+				console.warn(
+					`[AgenticStore] agentic_tool_execute: error step=${continuationIndex} tool=${pendingCall.function.name}`,
+					error
+				);
 			}
 
 			const toolDurationMs = performance.now() - toolStartTime;
@@ -649,6 +674,11 @@ class AgenticStore {
 				extracted.cleanedResult,
 				`${toolCall.id}_cont_${continuationIndex + 1}`
 			);
+			if (pendingCall) {
+				console.info(
+					`[AgenticStore] agentic_tool_execute: continuation next_step=${continuationIndex + 1} tool=${pendingCall.function.name}`
+				);
+			}
 			continuationIndex++;
 		}
 
@@ -760,11 +790,18 @@ class AgenticStore {
 
 	private requiresContinuation(payload: ContinuationPayload): boolean {
 		const status = typeof payload.status === 'string' ? payload.status : '';
+		const acceptanceStatus =
+			typeof payload.acceptance_status === 'string' ? payload.acceptance_status : '';
 		if (status === 'needs_continue') {
 			return true;
 		}
 
 		return (
+			acceptanceStatus === 'continue' ||
+			payload.task_completion === 'incomplete' ||
+			payload.batch_completion === 'incomplete' ||
+			payload.content_read_completion === 'incomplete' ||
+			payload.goal_status === 'not_complete' ||
 			this.parseBooleanish(payload.continue_required) ||
 			this.parseBooleanish(payload.auto_continue_required) ||
 			payload.assistant_response_allowed === false ||

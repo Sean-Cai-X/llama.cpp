@@ -159,6 +159,23 @@ static bool json_boolish_value(const json & body, const std::string & key, bool 
     return default_value;
 }
 
+static bool json_has_nonempty_value(const json & body, const std::string & key) {
+    if (!body.contains(key) || body.at(key).is_null()) {
+        return false;
+    }
+    const json & value = body.at(key);
+    if (value.is_string()) {
+        return !value.get<std::string>().empty();
+    }
+    if (value.is_boolean()) {
+        return value.get<bool>();
+    }
+    if (value.is_array() || value.is_object()) {
+        return !value.empty();
+    }
+    return true;
+}
+
 static constexpr const char * SERVER_TOOL_LAN_AGENT_HOST = "192.168.9.100";
 static constexpr int SERVER_TOOL_LAN_AGENT_PORT = 18080;
 static constexpr const char * SERVER_TOOL_LAN_AGENT_TOOLS_PATH = "/mcp";
@@ -270,21 +287,58 @@ static json consume_remote_lan_agent_continuation(
 
         const std::string status = result.value("status", "");
         const std::string status_code = result.value("status_code", "");
+        const std::string acceptance_status = result.value("acceptance_status", "");
+        const std::string task_completion = result.value("task_completion", "");
+        const std::string batch_completion = result.value("batch_completion", "");
+        const std::string content_read_completion = result.value("content_read_completion", "");
+        const std::string goal_status = result.value("goal_status", "");
         const std::string current_file_path = result.value("current_file_path", result.value("path", ""));
         const bool file_complete = json_boolish_value(result, "file_complete", false);
-        const bool directory_complete = json_boolish_value(result, "directory_complete", false);
+        const bool directory_complete =
+            json_boolish_value(result, "directory_complete", false) ||
+            batch_completion == "complete";
+        const bool continue_required =
+            json_boolish_value(result, "continue_required", false) ||
+            json_boolish_value(result, "auto_continue_required", false);
+        const bool assistant_response_allowed =
+            json_boolish_value(result, "assistant_response_allowed", true);
+        const bool final_answer_allowed =
+            json_boolish_value(result, "final_answer_allowed", true);
+        const bool requires_continue =
+            status == "needs_continue" ||
+            acceptance_status == "continue" ||
+            task_completion == "incomplete" ||
+            batch_completion == "incomplete" ||
+            content_read_completion == "incomplete" ||
+            goal_status == "not_complete" ||
+            continue_required ||
+            !assistant_response_allowed ||
+            !final_answer_allowed;
 
         continuation_steps.push_back({
             {"step", step},
             {"tool", tool_name},
             {"status", status},
             {"status_code", status_code},
+            {"acceptance_status", acceptance_status},
             {"current_file_path", current_file_path},
             {"file_complete", file_complete},
             {"directory_complete", directory_complete},
+            {"requires_continue", requires_continue},
         });
 
-        if (result.contains("error")) {
+        SRV_INF(
+            "lan_agent_mcp_continue: step=%d status='%s' acceptance='%s' file_complete=%d directory_complete=%d requires_continue=%d\n",
+            step,
+            status.c_str(),
+            acceptance_status.c_str(),
+            file_complete ? 1 : 0,
+            directory_complete ? 1 : 0,
+            requires_continue ? 1 : 0);
+
+        if (json_has_nonempty_value(result, "error") ||
+            json_has_nonempty_value(result, "error_code") ||
+            json_has_nonempty_value(result, "error_message")) {
             result["continuation_steps"] = continuation_steps;
             return result;
         }
@@ -294,7 +348,7 @@ static json consume_remote_lan_agent_continuation(
             return result;
         }
 
-        if (status == "needs_continue") {
+        if (requires_continue) {
             json next_call = json::object();
             if (result.contains("next_call_json")) {
                 const json & next_call_json = result.at("next_call_json");
@@ -321,10 +375,23 @@ static json consume_remote_lan_agent_continuation(
                 } catch (...) {
                 }
             }
+            if (next_call.empty() &&
+                result.contains("next_action_0_tool_name") &&
+                result.at("next_action_0_tool_name").is_string() &&
+                result.contains("next_action_0_params_json") &&
+                result.at("next_action_0_params_json").is_string()) {
+                try {
+                    next_call = json{
+                        {"name", result.at("next_action_0_tool_name").get<std::string>()},
+                        {"arguments", json::parse(result.at("next_action_0_params_json").get<std::string>())},
+                    };
+                } catch (...) {
+                }
+            }
 
             if (!next_call.is_object() || next_call.empty()) {
                 return {
-                    {"error", "remote LAN agent MCP returned needs_continue without valid next_call_json"},
+                    {"error", "remote LAN agent MCP returned continuation-required result without valid next_call_json"},
                     {"continuation_steps", continuation_steps},
                 };
             }
@@ -1221,6 +1288,258 @@ struct server_tool_lan_agent_read_directory_files : server_tool {
 };
 
 //
+// lan_agent_get_remote_session: compatibility wrapper for codex-lan-agent remote-session lookup
+//
+
+struct server_tool_lan_agent_get_remote_session : server_tool {
+    server_tool_lan_agent_get_remote_session() {
+        name = "lan_agent_get_remote_session";
+        display_name = "LAN agent get remote session";
+        permission_write = false;
+    }
+
+    json get_definition() override {
+        return {
+            {"type", "function"},
+            {"function", {
+                {"name", name},
+                {"description", "Load one remote-session conversation by session_id through the remote LAN agent MCP bridge."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"session_id", {{"type", "string"}, {"description", "Remote session identifier"}}},
+                    }},
+                    {"required", json::array({"session_id"})},
+                }},
+            }},
+        };
+    }
+
+    json invoke(json params) override {
+        SRV_INF("lan_agent_get_remote_session: delegating to remote LAN agent MCP tool bridge\n", 0);
+        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+    }
+};
+
+//
+// lan_agent_resolve_remote_session_task_refs: compatibility wrapper for 8095 remote-session task ref resolution
+//
+
+struct server_tool_lan_agent_resolve_remote_session_task_refs : server_tool {
+    server_tool_lan_agent_resolve_remote_session_task_refs() {
+        name = "lan_agent_resolve_remote_session_task_refs";
+        display_name = "LAN agent resolve remote session task refs";
+        permission_write = false;
+    }
+
+    json get_definition() override {
+        return {
+            {"type", "function"},
+            {"function", {
+                {"name", name},
+                {"description", "Resolve task refs from the 8095 remote-session supervision/task surface before reading files from 18080."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"session_id",    {{"type", "string"}, {"description", "Remote session identifier"}}},
+                        {"task_group_id", {{"type", "string"}, {"description", "Optional remote session task group"}}},
+                        {"task_id",       {{"type", "string"}, {"description", "Optional task identifier"}}},
+                        {"runner",        {{"type", "string"}, {"description", "Optional runner label"}}},
+                    }},
+                    {"required", json::array({"session_id"})},
+                }},
+            }},
+        };
+    }
+
+    json invoke(json params) override {
+        SRV_INF("lan_agent_resolve_remote_session_task_refs: delegating to remote LAN agent MCP tool bridge\n", 0);
+        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+    }
+};
+
+//
+// lan_agent_list_remote_session_tasks: compatibility wrapper for 8095 remote-session task listing
+//
+
+struct server_tool_lan_agent_list_remote_session_tasks : server_tool {
+    server_tool_lan_agent_list_remote_session_tasks() {
+        name = "lan_agent_list_remote_session_tasks";
+        display_name = "LAN agent list remote session tasks";
+        permission_write = false;
+    }
+
+    json get_definition() override {
+        return {
+            {"type", "function"},
+            {"function", {
+                {"name", name},
+                {"description", "List task bindings from the 8095 remote-session supervision/task surface for unified remote AI task discovery."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"session_id",    {{"type", "string"}, {"description", "Optional remote session identifier"}}},
+                        {"task_group_id", {{"type", "string"}, {"description", "Optional task group identifier"}}},
+                        {"runner",        {{"type", "string"}, {"description", "Optional runner label"}}},
+                        {"max_entries",   {{"type", "integer"}, {"description", "Optional maximum number of entries"}}},
+                    }},
+                    {"additionalProperties", false},
+                }},
+            }},
+        };
+    }
+
+    json invoke(json params) override {
+        SRV_INF("lan_agent_list_remote_session_tasks: delegating to remote LAN agent MCP tool bridge\n", 0);
+        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+    }
+};
+
+//
+// lan_agent_analyze_dialog_slices: compatibility wrapper for codex-lan-agent dialog slice inspection
+//
+
+struct server_tool_lan_agent_analyze_dialog_slices : server_tool {
+    server_tool_lan_agent_analyze_dialog_slices() {
+        name = "lan_agent_analyze_dialog_slices";
+        display_name = "LAN agent analyze dialog slices";
+        permission_write = false;
+    }
+
+    json get_definition() override {
+        return {
+            {"type", "function"},
+            {"function", {
+                {"name", name},
+                {"description", "Inspect stored dialog_slices through the remote LAN agent MCP bridge."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"session_id",  {{"type", "string"}, {"description", "Optional session identifier"}}},
+                        {"max_entries", {{"type", "integer"}, {"description", "Optional maximum number of entries"}}},
+                    }},
+                    {"additionalProperties", false},
+                }},
+            }},
+        };
+    }
+
+    json invoke(json params) override {
+        SRV_INF("lan_agent_analyze_dialog_slices: delegating to remote LAN agent MCP tool bridge\n", 0);
+        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+    }
+};
+
+//
+// lan_agent_list_recent_remote_events: compatibility wrapper for codex-lan-agent event feed lookup
+//
+
+struct server_tool_lan_agent_list_recent_remote_events : server_tool {
+    server_tool_lan_agent_list_recent_remote_events() {
+        name = "lan_agent_list_recent_remote_events";
+        display_name = "LAN agent list recent remote events";
+        permission_write = false;
+    }
+
+    json get_definition() override {
+        return {
+            {"type", "function"},
+            {"function", {
+                {"name", name},
+                {"description", "Return recent remote control events through the remote LAN agent MCP bridge."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"max_entries",     {{"type", "integer"}, {"description", "Optional maximum number of events"}}},
+                        {"include_auto",    {{"type", "boolean"}, {"description", "Whether to include auto events"}}},
+                        {"include_noise",   {{"type", "boolean"}, {"description", "Whether to include noise events"}}},
+                        {"ai_only",         {{"type", "boolean"}, {"description", "Whether to keep only AI-facing events"}}},
+                        {"since_timestamp", {{"type", "string"}, {"description", "Optional lower timestamp bound"}}},
+                        {"request_type",    {{"type", "string"}, {"description", "Optional request type filter"}}},
+                        {"command_name",    {{"type", "string"}, {"description", "Optional command name filter"}}},
+                    }},
+                    {"additionalProperties", false},
+                }},
+            }},
+        };
+    }
+
+    json invoke(json params) override {
+        SRV_INF("lan_agent_list_recent_remote_events: delegating to remote LAN agent MCP tool bridge\n", 0);
+        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+    }
+};
+
+//
+// lan_agent_get_task: compatibility wrapper for codex-lan-agent queued task inspection
+//
+
+struct server_tool_lan_agent_get_task : server_tool {
+    server_tool_lan_agent_get_task() {
+        name = "lan_agent_get_task";
+        display_name = "LAN agent get task";
+        permission_write = false;
+    }
+
+    json get_definition() override {
+        return {
+            {"type", "function"},
+            {"function", {
+                {"name", name},
+                {"description", "Load one queued or completed LAN agent task status and resolved result refs through the remote MCP bridge."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"task_id", {{"type", "string"}, {"description", "LAN agent task identifier"}}},
+                    }},
+                    {"required", json::array({"task_id"})},
+                }},
+            }},
+        };
+    }
+
+    json invoke(json params) override {
+        SRV_INF("lan_agent_get_task: delegating to remote LAN agent MCP tool bridge\n", 0);
+        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+    }
+};
+
+//
+// lan_agent_resolve_task_result: compatibility wrapper for task/log ref resolution
+//
+
+struct server_tool_lan_agent_resolve_task_result : server_tool {
+    server_tool_lan_agent_resolve_task_result() {
+        name = "lan_agent_resolve_task_result";
+        display_name = "LAN agent resolve task result";
+        permission_write = false;
+    }
+
+    json get_definition() override {
+        return {
+            {"type", "function"},
+            {"function", {
+                {"name", name},
+                {"description", "Resolve one task_id or task-log(...) reference into actual result and evidence refs through the remote MCP bridge."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"task_id",  {{"type", "string"}, {"description", "Optional LAN agent task identifier"}}},
+                        {"task_ref", {{"type", "string"}, {"description", "Optional task-log(...) or task:... reference"}}},
+                    }},
+                    {"additionalProperties", false},
+                }},
+            }},
+        };
+    }
+
+    json invoke(json params) override {
+        SRV_INF("lan_agent_resolve_task_result: delegating to remote LAN agent MCP tool bridge\n", 0);
+        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+    }
+};
+
+//
 // public API
 //
 
@@ -1233,6 +1552,13 @@ static std::vector<std::unique_ptr<server_tool>> build_tools() {
     tools.push_back(std::make_unique<server_tool_lan_agent_list_directory>());
     tools.push_back(std::make_unique<server_tool_lan_agent_read_text_file>());
     tools.push_back(std::make_unique<server_tool_lan_agent_read_directory_files>());
+    tools.push_back(std::make_unique<server_tool_lan_agent_get_task>());
+    tools.push_back(std::make_unique<server_tool_lan_agent_resolve_task_result>());
+    tools.push_back(std::make_unique<server_tool_lan_agent_list_remote_session_tasks>());
+    tools.push_back(std::make_unique<server_tool_lan_agent_get_remote_session>());
+    tools.push_back(std::make_unique<server_tool_lan_agent_resolve_remote_session_task_refs>());
+    tools.push_back(std::make_unique<server_tool_lan_agent_analyze_dialog_slices>());
+    tools.push_back(std::make_unique<server_tool_lan_agent_list_recent_remote_events>());
     tools.push_back(std::make_unique<server_tool_exec_shell_command>());
     tools.push_back(std::make_unique<server_tool_write_file>());
     tools.push_back(std::make_unique<server_tool_edit_file>());

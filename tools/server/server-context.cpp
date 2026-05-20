@@ -6,6 +6,8 @@
 #include "server-queue.h"
 #include "server-remote-session.h"
 #include "server-json-utils.h"
+#include "server-context-support.h"
+#include "server-memory-slice-contract.h"
 #include "server-remote-session-turn.h"
 #include "server-response-generator.h"
 #include "server-rag-routes.h"
@@ -44,7 +46,6 @@
 #include <sstream>
 #include <utility>
 #include <vector>
-#include <unordered_set>
 
 // fix problem with std::min and std::max
 #if defined(_WIN32)
@@ -66,32 +67,16 @@ using server_json::flatten_message_content;
 using server_json::get_array_or_empty;
 using server_json::get_bool_or_default;
 using server_json::get_string_or_empty;
-using server_json::parse_direct_payload;
+using server_context_support::build_rag_supporting_slice_ids;
+using server_context_support::find_tool_continuation_payload;
+using server_context_support::mark_closed_loop_complete;
+using server_context_support::remove_trailing_empty_assistant_prefill;
+using server_memory_slice_contract::append_contract_fields;
+using server_memory_slice_contract::default_audit_ref;
 
 using server_remote_session_turn::build_messages_from_session;
 using server_remote_session_turn::build_ventriloquy_result;
 using server_remote_session_turn::default_tool_availability_snapshot;
-
-json build_rag_supporting_slice_ids(const json & approved_context) {
-    json slice_ids = json::array();
-    std::unordered_set<std::string> seen;
-    if (!approved_context.is_array()) {
-        return slice_ids;
-    }
-
-    for (const auto & item : approved_context) {
-        if (!item.is_object()) {
-            continue;
-        }
-        const std::string slice_id = item.value("slice_id", item.value("source_id", ""));
-        if (slice_id.empty() || !seen.insert(slice_id).second) {
-            continue;
-        }
-        slice_ids.push_back(slice_id);
-    }
-
-    return slice_ids;
-}
 
 struct chat_supervision_verdict {
     bool supervised = false;
@@ -147,42 +132,6 @@ std::string get_clips_first_decision(const json & body) {
         return "";
     }
     return value.value("decision", value.value("status", value.value("route", "")));
-}
-
-json find_tool_continuation_payload(const json & body) {
-    if (!body.contains("messages") || !body.at("messages").is_array()) {
-        return json::object();
-    }
-
-    const json & messages = body.at("messages");
-    for (auto it = messages.rbegin(); it != messages.rend(); ++it) {
-        if (!it->is_object()) {
-            continue;
-        }
-
-        const std::string content = flatten_message_content(it->value("content", json()));
-        if (content.empty()) {
-            continue;
-        }
-
-        json parsed = parse_direct_payload(content);
-        if (!parsed.is_object() || parsed.empty()) {
-            continue;
-        }
-
-        if (parsed.contains("status") ||
-            parsed.contains("next_call_json") ||
-            parsed.contains("continue_required") ||
-            parsed.contains("clips_first_decision") ||
-            parsed.contains("assistant_response_allowed") ||
-            parsed.contains("final_answer_allowed") ||
-            parsed.contains("required_tool_arguments_json") ||
-            parsed.contains("next_action_0_params_json")) {
-            return parsed;
-        }
-    }
-
-    return json::object();
 }
 
 void populate_next_action_from_continuation_payload(
@@ -506,6 +455,9 @@ json build_supervision_json(const chat_supervision_verdict & verdict) {
 }
 
 std::string build_supervision_status_message(const chat_supervision_verdict & verdict) {
+    if (verdict.model_response_allowed && verdict.execution_disposition == "FINALIZE_ANSWER") {
+        return "Closed-loop continuation completed. The supervised tool chain finished and releasing a final response is allowed.";
+    }
     if (verdict.clips_first_decision == "continue") {
         if (!verdict.next_action_0_tool_name.empty()) {
             return "Supervision blocked releasing a model answer. The service is continuing the closed loop by executing next_action_0.";
@@ -535,7 +487,7 @@ json extract_continuation_payload_from_tool_result(const json & result) {
     }
 
     if (result.contains("plain_text_response") && result.at("plain_text_response").is_string()) {
-        json parsed = parse_direct_payload(result.at("plain_text_response").get<std::string>());
+        json parsed = server_json::parse_direct_payload(result.at("plain_text_response").get<std::string>());
         if (parsed.is_object() && !parsed.empty()) {
             return parsed;
         }
@@ -554,8 +506,16 @@ bool continuation_payload_requires_continue(const json & payload) {
         get_bool_or_default(payload, "auto_continue_required", false);
     const bool assistant_response_allowed = get_bool_or_default(payload, "assistant_response_allowed", true);
     const bool final_answer_allowed = get_bool_or_default(payload, "final_answer_allowed", true);
+    const std::string task_completion = payload.value("task_completion", "");
+    const std::string batch_completion = payload.value("batch_completion", "");
+    const std::string content_read_completion = payload.value("content_read_completion", "");
+    const std::string goal_status = payload.value("goal_status", "");
     return continuation_status == "needs_continue" ||
         acceptance_status == "continue" ||
+        task_completion == "incomplete" ||
+        batch_completion == "incomplete" ||
+        content_read_completion == "incomplete" ||
+        goal_status == "not_complete" ||
         continue_required ||
         !assistant_response_allowed ||
         !final_answer_allowed;
@@ -627,6 +587,10 @@ void apply_continuation_payload_to_verdict(
         verdict.route = "closed_loop_complete";
         verdict.dominant_decision = "complete";
         verdict.clips_first_decision = "complete";
+        verdict.next_action_0_tool_name.clear();
+        verdict.next_action_0_safety_class.clear();
+        verdict.next_action_0_params = json::object();
+        mark_closed_loop_complete(payload);
     }
 }
 
@@ -755,6 +719,62 @@ json maybe_execute_first_continue_action(
         {"failure_mode", verdict.failure_mode},
         {"continuation_execution_chain", execution_chain},
     };
+}
+
+void append_continuation_execution_messages(
+        json & body,
+        const json & next_action_execution) {
+    if (!next_action_execution.is_object() || next_action_execution.empty()) {
+        return;
+    }
+
+    if (!body.contains("messages") || !body.at("messages").is_array()) {
+        body["messages"] = json::array();
+    }
+
+    json execution_chain = next_action_execution.value("continuation_execution_chain", json::array());
+    if (!execution_chain.is_array() || execution_chain.empty()) {
+        execution_chain = json::array({next_action_execution});
+    }
+
+    int step_index = 0;
+    for (const auto & step : execution_chain) {
+        if (!step.is_object()) {
+            ++step_index;
+            continue;
+        }
+
+        const std::string tool_name = step.value("tool_name", step.value("tool", ""));
+        const json tool_params = step.value("params", json::object());
+        const json tool_result = step.value("result", json::object());
+        if (tool_name.empty()) {
+            ++step_index;
+            continue;
+        }
+
+        const std::string tool_call_id =
+            "continuation-" + std::to_string(step_index) + "-" + gen_tool_call_id();
+        body["messages"].push_back(json{
+            {"role", "assistant"},
+            {"content", ""},
+            {"tool_calls", json::array({
+                json{
+                    {"id", tool_call_id},
+                    {"type", "function"},
+                    {"function", {
+                        {"name", tool_name},
+                        {"arguments", safe_json_to_str(tool_params)},
+                    }},
+                }
+            })}
+        });
+        body["messages"].push_back(json{
+            {"role", "tool"},
+            {"tool_call_id", tool_call_id},
+            {"content", safe_json_to_str(tool_result)},
+        });
+        ++step_index;
+    }
 }
 
 json build_supervision_blocked_chat_response(
@@ -3462,6 +3482,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
                 {"takeover_relation", get_string_or_empty(body, "takeover_relation")},
                 {"speaker_mode", get_string_or_empty(body, "speaker_mode")},
                 {"reasoning_level", get_string_or_empty(body, "reasoning_level")},
+                {"primary_intent", get_string_or_empty(body, "primary_intent")},
                 {"prompt_purpose", get_string_or_empty(body, "prompt_purpose")},
                 {"response_mode", get_string_or_empty(body, "response_mode")},
                 {"context_refs", get_array_or_empty(body, "context_refs")},
@@ -3499,10 +3520,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
             if (next_action_execution.is_object() && !next_action_execution.empty()) {
                 normalized["next_action_0_execution"] = next_action_execution;
             }
-            normalized["provider_id"] = get_string_or_empty(persisted_turn, "provider_id");
-            normalized["capability_id"] = get_string_or_empty(persisted_turn, "capability_id");
-            normalized["slice_id"] = get_string_or_empty(persisted_turn, "slice_id");
-            normalized["slice_path"] = get_string_or_empty(persisted_turn, "slice_path");
+            append_contract_fields(normalized, persisted_turn, default_audit_ref(session_id, turn_id));
             normalized["timings"] = json{
                 {"build_messages_ms", build_messages_ms},
                 {"model_completion_ms", 0},
@@ -3660,14 +3678,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
         normalized["async_reply_policy"] = get_string_or_empty(body, "async_reply_policy");
         normalized["raw_tool_error"] = get_string_or_empty(body, "raw_tool_error");
         normalized["async_task_id"] = get_string_or_empty(body, "async_task_id");
-        normalized["provider_id"] = get_string_or_empty(persisted_turn, "provider_id");
-        normalized["capability_id"] = get_string_or_empty(persisted_turn, "capability_id");
-        normalized["slice_id"] = get_string_or_empty(persisted_turn, "slice_id");
-        normalized["slice_path"] = get_string_or_empty(persisted_turn, "slice_path");
-        normalized["dedup_key"] = get_string_or_empty(persisted_turn, "dedup_key");
-        normalized["dedup_hash"] = get_string_or_empty(persisted_turn, "dedup_hash");
-        normalized["canonical_slice_id"] = get_string_or_empty(persisted_turn, "canonical_slice_id");
-        normalized["canonical_status"] = get_string_or_empty(persisted_turn, "canonical_status");
+        append_contract_fields(normalized, persisted_turn, default_audit_ref(session_id, turn_id));
         normalized["error_signature"] = get_string_or_empty(persisted_turn, "error_signature");
         normalized["solution_summary"] = get_string_or_empty(persisted_turn, "solution_summary");
         normalized["strategy_family"] = get_string_or_empty(persisted_turn, "strategy_family");
@@ -3676,12 +3687,6 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
             : 0.0;
         normalized["vector_ready"] = persisted_turn.value("vector_ready", false);
         normalized["vector_skip_reason"] = get_string_or_empty(persisted_turn, "vector_skip_reason");
-        normalized["slice_refs"] = persisted_turn.contains("slice_refs")
-            ? persisted_turn["slice_refs"]
-            : json::array();
-        normalized["storage_refs"] = persisted_turn.contains("storage_refs")
-            ? persisted_turn["storage_refs"]
-            : json::array();
         normalized["timings"] = json{
             {"build_messages_ms", build_messages_ms},
             {"model_completion_ms", model_completion_ms},
@@ -4095,6 +4100,9 @@ void server_routes::init_routes() {
 this->post_chat_completions = [this](const server_http_req & req) {
     auto res = create_response();
     json body = json::parse(req.body);
+    if (remove_trailing_empty_assistant_prefill(body)) {
+        SRV_INF("%s\n", "chat request normalized: removed trailing empty assistant prefill placeholder");
+    }
 
     std::string rag_error;
     const bool skip_rag_injection = should_skip_rag_injection(body);
@@ -4129,6 +4137,15 @@ this->post_chat_completions = [this](const server_http_req & req) {
             {"supervision", build_supervision_json(mutable_verdict)},
             {"next_action_0_execution", next_action_execution},
         });
+        if (mutable_verdict.model_response_allowed) {
+            append_continuation_execution_messages(body, next_action_execution);
+            body["next_action_0_execution"] = next_action_execution;
+            body["supervision"] = build_supervision_json(mutable_verdict);
+            return handle_chat_with_builtin_tool_loop(
+                req,
+                body,
+                TASK_RESPONSE_TYPE_OAI_CHAT);
+        }
         res->ok(build_supervision_blocked_chat_response(meta->model_name, body, mutable_verdict, next_action_execution));
         return res;
     }
@@ -4195,6 +4212,9 @@ this->post_responses_oai = [this](const server_http_req & req) {
     auto res = create_response();
     std::vector<raw_buffer> files;
     json body = convert_responses_to_chatcmpl(json::parse(req.body));
+    if (remove_trailing_empty_assistant_prefill(body)) {
+        SRV_INF("%s\n", "responses request normalized: removed trailing empty assistant prefill placeholder");
+    }
 
     std::string rag_error;
     const bool skip_rag_injection = should_skip_rag_injection(body);
@@ -4229,6 +4249,15 @@ this->post_responses_oai = [this](const server_http_req & req) {
             {"supervision", build_supervision_json(mutable_verdict)},
             {"next_action_0_execution", next_action_execution},
         });
+        if (mutable_verdict.model_response_allowed) {
+            append_continuation_execution_messages(body, next_action_execution);
+            body["next_action_0_execution"] = next_action_execution;
+            body["supervision"] = build_supervision_json(mutable_verdict);
+            return handle_chat_with_builtin_tool_loop(
+                req,
+                body,
+                TASK_RESPONSE_TYPE_OAI_RESP);
+        }
         res->ok(build_supervision_blocked_chat_response(meta->model_name, body, mutable_verdict, next_action_execution));
         return res;
     }

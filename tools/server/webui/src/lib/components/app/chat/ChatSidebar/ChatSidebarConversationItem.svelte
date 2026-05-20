@@ -43,9 +43,28 @@
 	let isLoading = $derived(getAllLoadingChats().includes(conversation.id));
 	let auditSummary = $derived.by(() => {
 		const meta = [];
+		const availableToolCount = Array.isArray(conversation.availableToolClasses)
+			? conversation.availableToolClasses.length
+			: undefined;
 		if (conversation.currentSourceLabel) meta.push(conversation.currentSourceLabel);
 		else if (conversation.currentSourceType) meta.push(conversation.currentSourceType);
 		if (conversation.currentTaskState) meta.push(conversation.currentTaskState);
+		meta.push(
+			conversation.sessionSemanticProjectionReady
+				? `semantic:${conversation.semanticBindingMode || 'unspecified'}`
+				: '该 session 尚未带语义投影'
+		);
+		if (conversation.semanticObservabilityMode) {
+			meta.push(`obs:${conversation.semanticObservabilityMode}`);
+		}
+		if (conversation.semanticCatalogCount !== undefined) {
+			meta.push(`catalog:${conversation.semanticCatalogCount}`);
+		}
+		if (availableToolCount !== undefined) {
+			meta.push(`tools:${availableToolCount}`);
+		} else if (conversation.mountedToolCount !== undefined) {
+			meta.push(`tools:${conversation.mountedToolCount}`);
+		}
 		if (conversation.currentPrimaryIntent && conversation.currentPrimaryIntent !== 'unresolved') {
 			meta.push(conversation.currentPrimaryIntent);
 		}
@@ -64,7 +83,7 @@
 			meta.unshift(resultLabel === 'FAILED' ? 'FAIL' : resultLabel);
 		}
 
-		if (summary) {
+		if (summary && conversation.sessionSemanticProjectionReady !== false) {
 			const clipped = compactSummary.length > 60 ? `${compactSummary.slice(0, 60)}...` : compactSummary;
 			return meta.length > 0 ? `${meta.join(' | ')} | ${clipped}` : clipped;
 		}

@@ -32,9 +32,16 @@ export interface StructuredConclusion {
 export interface DialogSliceRecord {
 	sessionId: string;
 	turnId: string;
+	sliceId?: string;
+	sliceVersion?: string;
+	auditRef?: string;
 	userText: string;
 	assistantText: string;
 	summary?: string;
+	dedupStatus?: string;
+	canonicalSliceId?: string;
+	sliceRefs?: string[];
+	storageRefs?: string[];
 	expressionKeys?: string[];
 	evidenceRefs?: string[];
 	createdAt: number;
@@ -71,6 +78,19 @@ export interface DatabaseConversation {
 	currentPrimaryIntent?: string;
 	currentIntentConfidence?: number;
 	currentSummary?: string;
+	sessionSemanticProjectionReady?: boolean;
+	sessionSemanticProjectionSource?: string;
+	semanticBindingMode?: string;
+	semanticObservabilityMode?: string;
+	semanticCatalogCount?: number;
+	remoteDialogSemanticListCount?: number;
+	callableSemanticCount?: number;
+	nonCallableSemanticCount?: number;
+	mountedToolCount?: number;
+	displayProjectionMode?: string;
+	allCatalogEntriesVisibleInDialogList?: boolean;
+	catalogIsSingleSourceOfTruth?: boolean;
+	availableToolClasses?: string[];
 	lastTaskId?: string;
 	currentTaskGroupId?: string;
 	lastEvidenceRefs?: string[];

@@ -809,14 +809,21 @@ export class MCPService {
 		throwIfAborted(signal);
 
 		try {
+			console.info(
+				`[MCPService] callTool start server=${connection.serverName} tool=${params.name}`
+			);
 			const result = await connection.client.callTool(
 				{ name: params.name, arguments: params.arguments },
 				undefined,
 				{ signal }
 			);
+			const formatted = this.formatToolResult(result as ToolCallResult);
+			console.info(
+				`[MCPService] callTool result server=${connection.serverName} tool=${params.name} isError=${(result as ToolCallResult).isError ?? false} bytes=${formatted.length}`
+			);
 
 			return {
-				content: this.formatToolResult(result as ToolCallResult),
+				content: formatted,
 				isError: (result as ToolCallResult).isError ?? false
 			};
 		} catch (error) {
@@ -830,6 +837,10 @@ export class MCPService {
 			}
 
 			const message = error instanceof Error ? error.message : String(error);
+			console.warn(
+				`[MCPService] callTool error server=${connection.serverName} tool=${params.name}: ${message}`,
+				error
+			);
 
 			throw new Error(
 				`Tool "${params.name}" execution failed on server "${connection.serverName}": ${message}`,

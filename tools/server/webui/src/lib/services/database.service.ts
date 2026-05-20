@@ -25,6 +25,24 @@ class LlamacppDatabase extends Dexie {
 
 const db = new LlamacppDatabase();
 
+function parseJsonLikeValue<T>(value: unknown): T | undefined {
+	if (value === null || value === undefined) return undefined;
+	if (typeof value !== 'string') return value as T;
+	const trimmed = value.trim();
+	if (!trimmed) return undefined;
+	if (
+		(trimmed.startsWith('[') && trimmed.endsWith(']')) ||
+		(trimmed.startsWith('{') && trimmed.endsWith('}'))
+	) {
+		try {
+			return JSON.parse(trimmed) as T;
+		} catch {
+			return undefined;
+		}
+	}
+	return undefined;
+}
+
 export class DatabaseService {
 	/**
 	 *
@@ -452,7 +470,14 @@ export class DatabaseService {
 						turnId: turn.turn_id,
 						userText: turn.user_text || '',
 						assistantText: turn.assistant_text || '',
-						summary: turn.summary || undefined,
+						sliceId: turn.slice_id || undefined,
+						sliceVersion: turn.slice_version || undefined,
+						auditRef: turn.audit_ref || undefined,
+						summary: turn.slice_summary || turn.summary || undefined,
+						dedupStatus: turn.dedup_status || undefined,
+						canonicalSliceId: turn.canonical_slice_id || undefined,
+						sliceRefs: turn.slice_refs || [],
+						storageRefs: turn.storage_refs || [],
 						expressionKeys: [],
 						evidenceRefs,
 						createdAt: turn.timestamp || Date.now()
@@ -516,14 +541,22 @@ export class DatabaseService {
 							next_action: turn.next_action || undefined,
 							session_id: session.session_id,
 							turn_id: turn.turn_id,
-							summary: turn.summary || turn.direct_answer || undefined
+							slice_summary: turn.slice_summary || turn.summary || turn.direct_answer || undefined,
+							summary: turn.slice_summary || turn.summary || turn.direct_answer || undefined
 						},
 						dialogSlice: {
 							sessionId: session.session_id,
 							turnId: turn.turn_id,
 							userText: turn.user_text || '',
 							assistantText: turn.assistant_text || '',
-							summary: turn.summary || undefined,
+							sliceId: turn.slice_id || undefined,
+							sliceVersion: turn.slice_version || undefined,
+							auditRef: turn.audit_ref || undefined,
+							summary: turn.slice_summary || turn.summary || undefined,
+							dedupStatus: turn.dedup_status || undefined,
+							canonicalSliceId: turn.canonical_slice_id || undefined,
+							sliceRefs: turn.slice_refs || [],
+							storageRefs: turn.storage_refs || [],
 							expressionKeys: [],
 							evidenceRefs,
 							createdAt: (turn.timestamp || Date.now()) + 1
@@ -555,7 +588,7 @@ export class DatabaseService {
 
 			const conversation: DatabaseConversation = {
 				id: conversationId,
-				name: session.title || lastAssistantTurn?.summary || `Remote session ${session.session_id.slice(0, 8)}`,
+				name: session.title || lastAssistantTurn?.slice_summary || lastAssistantTurn?.summary || `Remote session ${session.session_id.slice(0, 8)}`,
 				lastModified: session.updated_at || Date.now(),
 				currNode,
 				sessionId: session.session_id,
@@ -563,7 +596,25 @@ export class DatabaseService {
 				currentTaskState: lastTurn ? (lastTurn.write_mode === 'append' ? 'verify' : 'observe') : undefined,
 				currentReasoningLevel: lastTurn?.reasoning_level || undefined,
 				currentPrimaryIntent: lastTurn?.prompt_purpose || undefined,
-				currentSummary: lastTurn?.summary || lastTurn?.direct_answer || undefined,
+				currentSummary: lastTurn?.slice_summary || lastTurn?.summary || lastTurn?.direct_answer || undefined,
+				sessionSemanticProjectionReady: session.session_semantic_projection_ready ?? false,
+				sessionSemanticProjectionSource: session.session_semantic_projection_source || 'none',
+				semanticBindingMode: session.semantic_binding_mode || 'unspecified',
+				semanticObservabilityMode: session.semantic_observability_mode || 'unspecified',
+				semanticCatalogCount: session.semantic_catalog_count ?? 0,
+				remoteDialogSemanticListCount: session.remote_dialog_semantic_list_count ?? 0,
+				callableSemanticCount: session.callable_semantic_count ?? 0,
+				nonCallableSemanticCount: session.non_callable_semantic_count ?? 0,
+				mountedToolCount: session.mounted_tool_count ?? 0,
+				displayProjectionMode: session.display_projection_mode || 'summary_with_semantics',
+				allCatalogEntriesVisibleInDialogList:
+					session.all_catalog_entries_visible_in_dialog_list ?? false,
+				catalogIsSingleSourceOfTruth: session.catalog_is_single_source_of_truth ?? false,
+				availableToolClasses:
+					parseJsonLikeValue<string[]>(session.available_tool_classes_json) ||
+					(Array.isArray(session.available_tool_classes_json)
+						? session.available_tool_classes_json
+						: []),
 				lastTaskId: lastTurn?.task_id || undefined,
 				currentTaskGroupId: session.task_group_id || lastTurn?.task_group_id || undefined,
 				lastEvidenceRefs: lastTurn?.evidence_ref ? [lastTurn.evidence_ref] : [],

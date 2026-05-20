@@ -1451,9 +1451,9 @@ static json structured_conclusion_to_json(
         }
     };
 
-    auto summary = get_string("summary");
+    auto summary = get_string("slice_summary");
     if (summary.empty()) {
-        summary = get_string("slice_summary");
+        summary = get_string("summary");
     }
     if (summary.empty() && !content.empty()) {
         summary = content.substr(0, std::min<size_t>(content.size(), 240));

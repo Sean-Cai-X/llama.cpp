@@ -28,6 +28,9 @@ export interface SettingsChatServiceOptions {
 	excludeReasoningFromContext?: boolean;
 	// Preferred reasoning strength level for dispatch-aware backends
 	reasoningStrengthLevel?: string;
+	// Skip per-tool permission confirmation when supported by the backend
+	auto_authorize?: boolean;
+	authorization_default?: 'allow' | 'prompt';
 	tools?: OpenAIToolDefinition[];
 	// Generation parameters
 	temperature?: number;

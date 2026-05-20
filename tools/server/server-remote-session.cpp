@@ -83,6 +83,89 @@ static json get_array(const json & value, const std::string & key) {
     return value.at(key);
 }
 
+static std::size_t count_entries(const json & value, std::initializer_list<const char *> keys) {
+    for (const char * key : keys) {
+        if (!value.is_object() || !value.contains(key) || value.at(key).is_null()) {
+            continue;
+        }
+        const json & field = value.at(key);
+        if (field.is_number_integer() || field.is_number_unsigned()) {
+            return field.get<std::size_t>();
+        }
+        if (field.is_array()) {
+            return field.size();
+        }
+    }
+    return 0;
+}
+
+static bool bool_or_default(const json & value, std::initializer_list<const char *> keys, bool fallback) {
+    for (const char * key : keys) {
+        if (!value.is_object() || !value.contains(key) || value.at(key).is_null()) {
+            continue;
+        }
+        const json & field = value.at(key);
+        if (field.is_boolean()) {
+            return field.get<bool>();
+        }
+        if (field.is_string()) {
+            const std::string lowered = trim_copy(field.get<std::string>());
+            if (lowered == "true") return true;
+            if (lowered == "false") return false;
+        }
+    }
+    return fallback;
+}
+
+static std::string first_nonempty_string(const json & value, std::initializer_list<const char *> keys, const std::string & fallback = "") {
+    for (const char * key : keys) {
+        const std::string candidate = trim_copy(get_string(value, key));
+        if (!candidate.empty()) {
+            return candidate;
+        }
+    }
+    return fallback;
+}
+
+static json first_array(const json & value, std::initializer_list<const char *> keys) {
+    for (const char * key : keys) {
+        if (value.is_object() && value.contains(key) && value.at(key).is_array()) {
+            return value.at(key);
+        }
+    }
+    return json::array();
+}
+
+static json first_object_or_array(const json & value, std::initializer_list<const char *> keys) {
+    for (const char * key : keys) {
+        if (!value.is_object() || !value.contains(key) || value.at(key).is_null()) {
+            continue;
+        }
+        const json & field = value.at(key);
+        if (field.is_object() || field.is_array()) {
+            return field;
+        }
+    }
+    return json();
+}
+
+static json extract_tool_availability_snapshot(const json & turn, std::string & source) {
+    if (turn.is_object() && turn.contains("tool_availability_snapshot") && turn.at("tool_availability_snapshot").is_object()) {
+        source = "latest_turn.tool_availability_snapshot";
+        return turn.at("tool_availability_snapshot");
+    }
+    if (turn.is_object() &&
+        turn.contains("request_payload") &&
+        turn.at("request_payload").is_object() &&
+        turn.at("request_payload").contains("tool_availability_snapshot") &&
+        turn.at("request_payload").at("tool_availability_snapshot").is_object()) {
+        source = "latest_turn.request_payload.tool_availability_snapshot";
+        return turn.at("request_payload").at("tool_availability_snapshot");
+    }
+    source = "none";
+    return json::object();
+}
+
 static std::string random_string(size_t len = 8) {
     static constexpr char alphabet[] =
         "0123456789"
@@ -222,18 +305,39 @@ json remote_session_store::build_slice_unlocked(const std::string & session_id, 
     const std::string dedup_key = "dedup:" + fnv1a64_hex(dedup_source);
     const std::string slice_type = source_type == "webui" ? "manual_webui" : "remote_session";
     const std::string slice_id = "slice:" + session_id + ":" + turn_id;
+    const std::string audit_ref = "session:" + session_id + "/turn:" + turn_id;
+    const std::string task_id = trim_copy(get_string(turn, "task_id")).empty()
+        ? "unbound"
+        : trim_copy(get_string(turn, "task_id"));
+    const std::string reasoning_level = trim_copy(get_string(turn, "reasoning_level")).empty()
+        ? "unspecified"
+        : trim_copy(get_string(turn, "reasoning_level"));
+    const std::string primary_intent = trim_copy(get_string(turn, "primary_intent")).empty()
+        ? "unspecified"
+        : trim_copy(get_string(turn, "primary_intent"));
+    const std::string confidence = trim_copy(get_string(turn, "confidence")).empty()
+        ? "unclear"
+        : trim_copy(get_string(turn, "confidence"));
+    const std::string result_ref = trim_copy(get_string(turn, "result_ref")).empty()
+        ? audit_ref
+        : trim_copy(get_string(turn, "result_ref"));
+    const std::string evidence_ref = trim_copy(get_string(turn, "evidence_ref")).empty()
+        ? audit_ref
+        : trim_copy(get_string(turn, "evidence_ref"));
 
     return json{
         {"record_model", "rag_memory_slice_v1"},
+        {"slice_version", "rag_memory_slice_v1"},
         {"slice_id", slice_id},
         {"slice_type", slice_type},
         {"created_at", turn.value("timestamp", now_ms())},
         {"provider_id", "llama_cpp_b8851_remote_session"},
         {"capability_id", "remote_session_turn"},
         {"source_provider", "llama.cpp-b8851"},
-        {"task_id", get_string(turn, "task_id")},
+        {"task_id", task_id},
         {"session_id", session_id},
         {"turn_id", turn_id},
+        {"audit_ref", audit_ref},
         {"task_group_id", get_string(turn, "task_group_id")},
         {"strategy_key", get_string(turn, "prompt_purpose")},
         {"strategy_family", strategy_family},
@@ -243,14 +347,14 @@ json remote_session_store::build_slice_unlocked(const std::string & session_id, 
         {"error_signature", error_signature},
         {"solution_summary", solution_summary},
         {"expression_keys", json::array()},
-        {"reasoning_level", get_string(turn, "reasoning_level")},
-        {"primary_intent", ""},
+        {"reasoning_level", reasoning_level},
+        {"primary_intent", primary_intent},
         {"secondary_intents", json::array()},
-        {"confidence", get_string(turn, "confidence")},
+        {"confidence", confidence},
         {"similarity_score", 0.0},
-        {"result_ref", get_string(turn, "result_ref")},
-        {"evidence_ref", get_string(turn, "evidence_ref")},
-        {"slice_refs", json::array()},
+        {"result_ref", result_ref},
+        {"evidence_ref", evidence_ref},
+        {"slice_refs", json::array({slice_id})},
         {"storage_refs", json::array({"remote_session_store:" + session_id, "remote_session_slice:" + slice_id})},
         {"source_type", source_type},
         {"write_mode", write_mode},
@@ -258,6 +362,9 @@ json remote_session_store::build_slice_unlocked(const std::string & session_id, 
         {"vector_ready", !dirty_slice},
         {"vector_skip_reason", dirty_slice ? "dirty_content_only_brace" : ""},
         {"canonical_slice_id", ""},
+        {"dedup_status", "pending"},
+        {"dedup_reason", ""},
+        {"dup_of", ""},
         {"canonical_status", "pending"},
         {"metadata_json", turn},
         {"dedup_hash", dedup_key}
@@ -277,7 +384,39 @@ std::optional<json> remote_session_store::get_session(const std::string & sessio
     if (!fs::exists(path)) {
         return std::nullopt;
     }
-    return load_session_unlocked(session_id);
+    return enrich_session_projection(load_session_unlocked(session_id));
+}
+
+json remote_session_store::enrich_session_projection(const json & session) const {
+    if (!session.is_object()) {
+        return session;
+    }
+
+    json enriched = session;
+    const json turns = get_array(session, "turns");
+    const json latest_turn = turns.empty() ? json::object() : turns.back();
+    std::string projection_source;
+    const json snapshot = extract_tool_availability_snapshot(latest_turn, projection_source);
+    const bool projection_ready = snapshot.is_object() && !snapshot.empty();
+    const json available_tool_classes = first_array(snapshot, {"available_tool_classes", "available_tool_classes_json"});
+
+    enriched["tool_availability_snapshot"] = snapshot;
+    enriched["session_semantic_projection_ready"] = projection_ready;
+    enriched["session_semantic_projection_source"] = projection_source;
+    enriched["semantic_binding_mode"] = first_nonempty_string(snapshot, {"semantic_binding_mode"}, "unspecified");
+    enriched["semantic_observability_mode"] = first_nonempty_string(snapshot, {"semantic_observability_mode"}, "unspecified");
+    enriched["semantic_catalog_count"] = count_entries(snapshot, {"semantic_catalog_count", "semantic_catalog_entries", "semantic_catalog", "catalog_entries"});
+    enriched["remote_dialog_semantic_list_count"] = count_entries(snapshot, {"remote_dialog_semantic_list_count", "remote_dialog_semantic_list", "dialog_semantic_list"});
+    enriched["callable_semantic_count"] = count_entries(snapshot, {"callable_semantic_count", "callable_semantics", "callable_entries"});
+    enriched["non_callable_semantic_count"] = count_entries(snapshot, {"non_callable_semantic_count", "non_callable_semantics", "non_callable_entries"});
+    enriched["mounted_tool_count"] = count_entries(snapshot, {"mounted_tool_count", "mounted_tools", "mounted_tool_ids"});
+    enriched["display_projection_mode"] = first_nonempty_string(snapshot, {"display_projection_mode"}, "summary_with_semantics");
+    enriched["all_catalog_entries_visible_in_dialog_list"] = bool_or_default(snapshot, {"all_catalog_entries_visible_in_dialog_list"}, false);
+    enriched["catalog_is_single_source_of_truth"] = bool_or_default(snapshot, {"catalog_is_single_source_of_truth"}, false);
+    enriched["available_tool_classes_json"] = available_tool_classes;
+    enriched["semantic_catalog_json"] = first_object_or_array(snapshot, {"semantic_catalog_json", "semantic_catalog", "semantic_catalog_entries"});
+    enriched["remote_dialog_semantic_list_json"] = first_object_or_array(snapshot, {"remote_dialog_semantic_list_json", "remote_dialog_semantic_list", "dialog_semantic_list"});
+    return enriched;
 }
 
 json remote_session_store::list_sessions(int limit) const {
@@ -304,7 +443,7 @@ json remote_session_store::list_sessions(int limit) const {
         }
 
         try {
-            json session = json::parse(in);
+            json session = enrich_session_projection(json::parse(in));
             json turns = get_array(session, "turns");
             const json last_turn = turns.empty() ? json::object() : turns.back();
             sessions.push_back({
@@ -321,7 +460,22 @@ json remote_session_store::list_sessions(int limit) const {
                     {"handoff_to", session.value("handoff_to", "")},
                     {"takeover_relation", session.value("takeover_relation", "")},
                     {"turn_count", turns.size()},
-                    {"current_summary", get_string(last_turn, "summary")},
+                    {"current_summary", get_string(last_turn, "slice_summary").empty()
+                        ? get_string(last_turn, "summary")
+                        : get_string(last_turn, "slice_summary")},
+                    {"session_semantic_projection_ready", session.value("session_semantic_projection_ready", false)},
+                    {"session_semantic_projection_source", session.value("session_semantic_projection_source", "none")},
+                    {"semantic_binding_mode", session.value("semantic_binding_mode", "unspecified")},
+                    {"semantic_observability_mode", session.value("semantic_observability_mode", "unspecified")},
+                    {"semantic_catalog_count", session.value("semantic_catalog_count", 0)},
+                    {"remote_dialog_semantic_list_count", session.value("remote_dialog_semantic_list_count", 0)},
+                    {"callable_semantic_count", session.value("callable_semantic_count", 0)},
+                    {"non_callable_semantic_count", session.value("non_callable_semantic_count", 0)},
+                    {"mounted_tool_count", session.value("mounted_tool_count", 0)},
+                    {"display_projection_mode", session.value("display_projection_mode", "summary_with_semantics")},
+                    {"all_catalog_entries_visible_in_dialog_list", session.value("all_catalog_entries_visible_in_dialog_list", false)},
+                    {"catalog_is_single_source_of_truth", session.value("catalog_is_single_source_of_truth", false)},
+                    {"available_tool_classes_json", session.value("available_tool_classes_json", json::array())},
                     {"last_task_id", get_string(last_turn, "task_id")},
                     {"last_result_ref", get_string(last_turn, "result_ref")},
                     {"last_evidence_ref", get_string(last_turn, "evidence_ref")}
@@ -380,9 +534,11 @@ json remote_session_store::upsert_turn(
         {"takeover_relation", takeover_relation},
         {"speaker_mode", get_string(metadata, "speaker_mode")},
         {"reasoning_level", get_string(metadata, "reasoning_level")},
+        {"primary_intent", get_string(metadata, "primary_intent")},
         {"prompt_purpose", get_string(metadata, "prompt_purpose")},
         {"response_mode", get_string(metadata, "response_mode")},
         {"context_refs", get_array(metadata, "context_refs")},
+        {"tool_availability_snapshot", metadata.contains("tool_availability_snapshot") ? metadata["tool_availability_snapshot"] : json::object()},
         {"user_text", user_text},
         {"assistant_text", assistant_text},
         {"summary", summary},
@@ -409,7 +565,11 @@ json remote_session_store::upsert_turn(
         save_canonical_index_unlocked(canonical_index);
     }
     slice["canonical_slice_id"] = canonical_slice_id;
-    slice["canonical_status"] = canonical_exists ? "duplicate" : "canonical";
+    slice["dedup_status"] = canonical_exists ? "duplicate" : "canonical";
+    slice["dedup_reason"] = canonical_exists ? "duplicate_of_canonical_hash" : "first_observed_hash";
+    slice["dup_of"] = canonical_exists ? canonical_slice_id : "";
+    slice["slice_refs"] = json::array({canonical_slice_id.empty() ? slice_id : canonical_slice_id});
+    slice["canonical_status"] = slice["dedup_status"];
     if (canonical_exists) {
         slice["vector_ready"] = false;
         if (get_string(slice, "vector_skip_reason").empty()) {
@@ -417,12 +577,21 @@ json remote_session_store::upsert_turn(
         }
     }
     turn["slice_id"] = slice_id;
-    turn["slice_refs"] = json::array({slice_id});
-    turn["storage_refs"] = json::array({"remote_session_store:" + session_id, "remote_session_slice:" + slice_id});
+    turn["slice_version"] = get_string(slice, "slice_version");
+    turn["slice_type"] = get_string(slice, "slice_type");
+    turn["audit_ref"] = get_string(slice, "audit_ref");
+    turn["slice_summary"] = get_string(slice, "slice_summary");
+    turn["slice_refs"] = slice.contains("slice_refs") ? slice["slice_refs"] : json::array({slice_id});
+    turn["storage_refs"] = slice.contains("storage_refs")
+        ? slice["storage_refs"]
+        : json::array({"remote_session_store:" + session_id, "remote_session_slice:" + slice_id});
     turn["slice_path"] = persisted_slice_path;
     turn["dedup_key"] = dedup_key;
     turn["dedup_hash"] = dedup_key;
     turn["canonical_slice_id"] = canonical_slice_id;
+    turn["dedup_status"] = get_string(slice, "dedup_status");
+    turn["dedup_reason"] = get_string(slice, "dedup_reason");
+    turn["dup_of"] = get_string(slice, "dup_of");
     turn["canonical_status"] = get_string(slice, "canonical_status");
     turn["provider_id"] = get_string(slice, "provider_id");
     turn["capability_id"] = get_string(slice, "capability_id");

@@ -60,6 +60,7 @@ export const SETTINGS_KEYS = {
 	DISABLE_REASONING_PARSING: 'disableReasoningParsing',
 	EXCLUDE_REASONING_FROM_CONTEXT: 'excludeReasoningFromContext',
 	REASONING_STRENGTH_LEVEL: 'reasoningStrengthLevel',
+	MCP_AUTO_AUTHORIZE_TOOLS: 'mcpAutoAuthorizeTools',
 	SHOW_RAW_OUTPUT_SWITCH: 'showRawOutputSwitch',
 	CUSTOM: 'custom'
 } as const;

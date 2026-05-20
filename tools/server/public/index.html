@@ -694,6 +694,66 @@
 					return section;
 				}
 
+				function parseRemoteJsonLike(value) {
+					if (value === null || value === undefined) return undefined;
+					if (typeof value !== 'string') return value;
+					const trimmed = value.trim();
+					if (!trimmed) return undefined;
+					if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+						try {
+							return JSON.parse(trimmed);
+						} catch (_error) {
+							return value;
+						}
+					}
+					return value;
+				}
+
+				function resolveAvailableToolCount(source) {
+					const classes = parseRemoteJsonLike(source?.available_tool_classes_json || source?.availableToolClasses);
+					if (Array.isArray(classes)) return classes.length;
+					if (source?.mounted_tool_count !== undefined) return source.mounted_tool_count;
+					if (source?.mountedToolCount !== undefined) return source.mountedToolCount;
+					return undefined;
+				}
+
+				function createRemoteJsonDetails(label, value, options = {}) {
+					const details = document.createElement('details');
+					details.open = !!options.open;
+					details.style.cssText = 'font-size:12px;opacity:0.95;';
+					const summary = document.createElement('summary');
+					summary.textContent = label;
+					summary.style.cssText = 'cursor:pointer;opacity:0.82;';
+					const body = document.createElement('pre');
+					body.textContent = formatRemoteValue(parseRemoteJsonLike(value)) || '(empty)';
+					body.style.cssText = 'margin-top:8px;white-space:pre-wrap;word-break:break-word;border-radius:10px;background:rgba(255,255,255,0.06);padding:10px;max-height:260px;overflow:auto;';
+					details.appendChild(summary);
+					details.appendChild(body);
+					return details;
+				}
+
+				function createRemoteSessionProjectionBlock(session) {
+					const block = document.createElement('div');
+					block.style.cssText = 'display:flex;flex-direction:column;gap:10px;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:12px;background:rgba(94,168,255,0.08);';
+					const toolCount = resolveAvailableToolCount(session);
+					const info = document.createElement('div');
+					info.textContent = [
+						session?.session_semantic_projection_ready ? 'projection:ready' : 'projection:missing',
+						session?.semantic_binding_mode ? `binding:${session.semantic_binding_mode}` : '',
+						session?.semantic_observability_mode ? `obs:${session.semantic_observability_mode}` : '',
+						session?.semantic_catalog_count !== undefined ? `catalog:${session.semantic_catalog_count}` : '',
+						toolCount !== undefined ? `tools:${toolCount}` : '',
+						session?.session_semantic_projection_source ? `source:${session.session_semantic_projection_source}` : ''
+					].filter(Boolean).join(' | ') || 'No semantic projection metadata.';
+					info.style.cssText = 'font-size:12px;line-height:1.45;opacity:0.9;';
+					block.appendChild(info);
+					block.appendChild(createRemoteJsonDetails('Available tool classes', session?.available_tool_classes_json || [], { open: true }));
+					block.appendChild(createRemoteJsonDetails('Semantic catalog JSON', session?.semantic_catalog_json || [], { open: false }));
+					block.appendChild(createRemoteJsonDetails('Remote dialog semantic list JSON', session?.remote_dialog_semantic_list_json || [], { open: false }));
+					block.appendChild(createRemoteJsonDetails('Tool availability snapshot', session?.tool_availability_snapshot || {}, { open: false }));
+					return block;
+				}
+
 				function structuredRemoteTurnResult(turn) {
 					return {
 						direct_answer: isThinkingOnlyText(turn.direct_answer) ? '' : (turn.direct_answer || ''),
@@ -732,6 +792,7 @@
 					}
 					if (!turnsHost) return;
 					turnsHost.innerHTML = '';
+					turnsHost.appendChild(createRemoteSessionProjectionBlock(session));
 					appendOptionValues(overlay.querySelector('.codex-remote-session-filter-purpose'), [...new Set(turns.map((turn) => turn.prompt_purpose || ''))], 'All purposes');
 					appendOptionValues(overlay.querySelector('.codex-remote-session-filter-confidence'), [...new Set(turns.map((turn) => turn.confidence || ''))], 'All confidence');
 					appendOptionValues(overlay.querySelector('.codex-remote-session-filter-mode'), [...new Set(turns.map((turn) => turn.write_mode || ''))], 'All modes');
@@ -873,15 +934,42 @@
 				}
 
 				function buildRemoteConversationName(session) {
+					if (session.session_semantic_projection_ready === false) {
+						return `Remote session ${String(session.session_id || '').slice(0, 8)}`;
+					}
 					const turns = session.turns || [];
 					const lastTurn = turns[turns.length - 1] || {};
-					const summaryTitle = extractDisplaySummary(lastTurn.summary || lastTurn.direct_answer || '');
+					const summaryTitle = extractDisplaySummary(lastTurn.slice_summary || lastTurn.summary || lastTurn.direct_answer || '');
 					return summaryTitle || `Remote session ${String(session.session_id || '').slice(0, 8)}`;
 				}
 
 				function buildRemoteConversationNameFromListItem(item) {
+					if (item.session_semantic_projection_ready === false) {
+						return `Remote session ${String(item.session_id || '').slice(0, 8)}`;
+					}
 					const summaryTitle = extractDisplaySummary(item.current_summary || '');
 					return summaryTitle || `Remote session ${String(item.session_id || '').slice(0, 8)}`;
+				}
+
+				function buildSemanticProjectionMeta(source) {
+					if (!source) return '';
+					const meta = [];
+					const toolCount = resolveAvailableToolCount(source);
+					if (source.session_semantic_projection_ready === false || source.sessionSemanticProjectionReady === false) {
+						meta.push('该 session 尚未带语义投影');
+					} else if (source.semantic_binding_mode || source.semanticBindingMode) {
+						meta.push(`semantic:${source.semantic_binding_mode || source.semanticBindingMode}`);
+					}
+					if (source.semantic_observability_mode || source.semanticObservabilityMode) {
+						meta.push(`obs:${source.semantic_observability_mode || source.semanticObservabilityMode}`);
+					}
+					if (source.semantic_catalog_count !== undefined || source.semanticCatalogCount !== undefined) {
+						meta.push(`catalog:${source.semantic_catalog_count ?? source.semanticCatalogCount}`);
+					}
+					if (toolCount !== undefined) {
+						meta.push(`tools:${toolCount}`);
+					}
+					return meta.filter(Boolean).join(' | ');
 				}
 
 				async function deleteMessagesByConversationId(conversationId) {
@@ -1087,6 +1175,21 @@
 							currentReasoningLevel: lastTurn.reasoning_level || undefined,
 							currentPrimaryIntent: lastTurn.prompt_purpose || undefined,
 							currentSummary: lastTurn.summary || lastTurn.direct_answer || undefined,
+							sessionSemanticProjectionReady: session.session_semantic_projection_ready ?? false,
+							sessionSemanticProjectionSource: session.session_semantic_projection_source || 'none',
+							semanticBindingMode: session.semantic_binding_mode || 'unspecified',
+							semanticObservabilityMode: session.semantic_observability_mode || 'unspecified',
+							semanticCatalogCount: session.semantic_catalog_count ?? 0,
+							remoteDialogSemanticListCount: session.remote_dialog_semantic_list_count ?? 0,
+							callableSemanticCount: session.callable_semantic_count ?? 0,
+							nonCallableSemanticCount: session.non_callable_semantic_count ?? 0,
+							mountedToolCount: session.mounted_tool_count ?? 0,
+							displayProjectionMode: session.display_projection_mode || 'summary_with_semantics',
+							allCatalogEntriesVisibleInDialogList: session.all_catalog_entries_visible_in_dialog_list ?? false,
+							catalogIsSingleSourceOfTruth: session.catalog_is_single_source_of_truth ?? false,
+							availableToolClasses: Array.isArray(parseRemoteJsonLike(session.available_tool_classes_json))
+								? parseRemoteJsonLike(session.available_tool_classes_json)
+								: [],
 							lastTaskId: lastTurn.task_id || undefined,
 							currentTaskGroupId: session.task_group_id || lastTurn.task_group_id || undefined,
 							lastEvidenceRefs: lastTurn.evidence_ref ? [lastTurn.evidence_ref] : [],
@@ -1174,10 +1277,12 @@
 					const handoffText = [conversation.currentHandoffFrom, conversation.currentHandoffTo].filter(Boolean).join('→');
 					const sessionLabel = conversation.sessionId ? `session ${conversation.sessionId.slice(0, 8)}` : '';
 					const summary = extractDisplaySummary(sourceSummary);
+					const semanticProjectionMeta = buildSemanticProjectionMeta(conversation);
 					return [
 						resultLabel,
 						sourceLabel,
 						taskState,
+						semanticProjectionMeta,
 						primaryIntent,
 						takeoverRelation,
 						taskGroupId,
@@ -1540,8 +1645,9 @@
 					const taskGroup = item.task_group_id || '';
 					const taskId = item.last_task_id || '';
 					const sessionLabel = item.session_id ? `session ${String(item.session_id).slice(0, 8)}` : '';
-					const summary = extractDisplaySummary(item.current_summary || '');
-					return [resultLabel, sourceLabel, taskGroup, taskId, sessionLabel, summary].filter(Boolean).join(' | ');
+					const summary = item.session_semantic_projection_ready === false ? '' : extractDisplaySummary(item.current_summary || '');
+					const semanticProjectionMeta = buildSemanticProjectionMeta(item);
+					return [resultLabel, sourceLabel, semanticProjectionMeta, taskGroup, taskId, sessionLabel, summary].filter(Boolean).join(' | ');
 				}
 
 				function buildRemoteConversationViewFromListItem(item) {
@@ -1550,6 +1656,21 @@
 						name: buildRemoteConversationNameFromListItem(item),
 						sessionId: item.session_id || '',
 						currentSummary: item.current_summary || '',
+						sessionSemanticProjectionReady: item.session_semantic_projection_ready ?? false,
+						sessionSemanticProjectionSource: item.session_semantic_projection_source || 'none',
+						semanticBindingMode: item.semantic_binding_mode || 'unspecified',
+						semanticObservabilityMode: item.semantic_observability_mode || 'unspecified',
+						semanticCatalogCount: item.semantic_catalog_count ?? 0,
+						remoteDialogSemanticListCount: item.remote_dialog_semantic_list_count ?? 0,
+						callableSemanticCount: item.callable_semantic_count ?? 0,
+						nonCallableSemanticCount: item.non_callable_semantic_count ?? 0,
+						mountedToolCount: item.mounted_tool_count ?? 0,
+						displayProjectionMode: item.display_projection_mode || 'summary_with_semantics',
+						allCatalogEntriesVisibleInDialogList: item.all_catalog_entries_visible_in_dialog_list ?? false,
+						catalogIsSingleSourceOfTruth: item.catalog_is_single_source_of_truth ?? false,
+						availableToolClasses: Array.isArray(parseRemoteJsonLike(item.available_tool_classes_json))
+							? parseRemoteJsonLike(item.available_tool_classes_json)
+							: [],
 						lastTaskId: item.last_task_id || '',
 						currentTaskGroupId: item.task_group_id || '',
 						currentSourceType: item.source_type || ''
@@ -1592,6 +1713,21 @@
 						currentTaskState: lastTurn.write_mode === 'append' ? 'verify' : 'observe',
 						currentPrimaryIntent: lastTurn.prompt_purpose || '',
 						currentSummary: lastTurn.summary || lastTurn.direct_answer || '',
+						sessionSemanticProjectionReady: session.session_semantic_projection_ready ?? false,
+						sessionSemanticProjectionSource: session.session_semantic_projection_source || 'none',
+						semanticBindingMode: session.semantic_binding_mode || 'unspecified',
+						semanticObservabilityMode: session.semantic_observability_mode || 'unspecified',
+						semanticCatalogCount: session.semantic_catalog_count ?? 0,
+						remoteDialogSemanticListCount: session.remote_dialog_semantic_list_count ?? 0,
+						callableSemanticCount: session.callable_semantic_count ?? 0,
+						nonCallableSemanticCount: session.non_callable_semantic_count ?? 0,
+						mountedToolCount: session.mounted_tool_count ?? 0,
+						displayProjectionMode: session.display_projection_mode || 'summary_with_semantics',
+						allCatalogEntriesVisibleInDialogList: session.all_catalog_entries_visible_in_dialog_list ?? false,
+						catalogIsSingleSourceOfTruth: session.catalog_is_single_source_of_truth ?? false,
+						availableToolClasses: Array.isArray(parseRemoteJsonLike(session.available_tool_classes_json))
+							? parseRemoteJsonLike(session.available_tool_classes_json)
+							: [],
 						lastTaskId: lastTurn.task_id || '',
 						currentTaskGroupId: session.task_group_id || lastTurn.task_group_id || '',
 						currentSourceType: session.source_type || lastTurn.source_type || '',
