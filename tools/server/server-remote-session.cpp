@@ -149,6 +149,26 @@ static json first_object_or_array(const json & value, std::initializer_list<cons
     return json();
 }
 
+static int count_array_objects_with_key_value(
+        const json & value,
+        std::initializer_list<const char *> keys,
+        const char * match_key,
+        const std::string & match_value) {
+    for (const char * key : keys) {
+        if (!value.is_object() || !value.contains(key) || !value.at(key).is_array()) {
+            continue;
+        }
+        int count = 0;
+        for (const auto & item : value.at(key)) {
+            if (item.is_object() && get_string(item, match_key) == match_value) {
+                ++count;
+            }
+        }
+        return count;
+    }
+    return 0;
+}
+
 static json extract_tool_availability_snapshot(const json & turn, std::string & source) {
     if (turn.is_object() && turn.contains("tool_availability_snapshot") && turn.at("tool_availability_snapshot").is_object()) {
         source = "latest_turn.tool_availability_snapshot";
@@ -406,6 +426,16 @@ json remote_session_store::enrich_session_projection(const json & session) const
     enriched["semantic_binding_mode"] = first_nonempty_string(snapshot, {"semantic_binding_mode"}, "unspecified");
     enriched["semantic_observability_mode"] = first_nonempty_string(snapshot, {"semantic_observability_mode"}, "unspecified");
     enriched["semantic_catalog_count"] = count_entries(snapshot, {"semantic_catalog_count", "semantic_catalog_entries", "semantic_catalog", "catalog_entries"});
+    enriched["mcp_18080_count"] = count_array_objects_with_key_value(
+        snapshot,
+        {"semantic_catalog_json", "semantic_catalog", "semantic_catalog_entries"},
+        "source_plane",
+        "mcp_18080");
+    enriched["semantic_8095_count"] = count_array_objects_with_key_value(
+        snapshot,
+        {"semantic_catalog_json", "semantic_catalog", "semantic_catalog_entries"},
+        "source_plane",
+        "semantic_8095");
     enriched["remote_dialog_semantic_list_count"] = count_entries(snapshot, {"remote_dialog_semantic_list_count", "remote_dialog_semantic_list", "dialog_semantic_list"});
     enriched["callable_semantic_count"] = count_entries(snapshot, {"callable_semantic_count", "callable_semantics", "callable_entries"});
     enriched["non_callable_semantic_count"] = count_entries(snapshot, {"non_callable_semantic_count", "non_callable_semantics", "non_callable_entries"});
@@ -468,6 +498,8 @@ json remote_session_store::list_sessions(int limit) const {
                     {"semantic_binding_mode", session.value("semantic_binding_mode", "unspecified")},
                     {"semantic_observability_mode", session.value("semantic_observability_mode", "unspecified")},
                     {"semantic_catalog_count", session.value("semantic_catalog_count", 0)},
+                    {"mcp_18080_count", session.value("mcp_18080_count", 0)},
+                    {"semantic_8095_count", session.value("semantic_8095_count", 0)},
                     {"remote_dialog_semantic_list_count", session.value("remote_dialog_semantic_list_count", 0)},
                     {"callable_semantic_count", session.value("callable_semantic_count", 0)},
                     {"non_callable_semantic_count", session.value("non_callable_semantic_count", 0)},
@@ -476,6 +508,7 @@ json remote_session_store::list_sessions(int limit) const {
                     {"all_catalog_entries_visible_in_dialog_list", session.value("all_catalog_entries_visible_in_dialog_list", false)},
                     {"catalog_is_single_source_of_truth", session.value("catalog_is_single_source_of_truth", false)},
                     {"available_tool_classes_json", session.value("available_tool_classes_json", json::array())},
+                    {"semantic_catalog_json", session.value("semantic_catalog_json", json::array())},
                     {"last_task_id", get_string(last_turn, "task_id")},
                     {"last_result_ref", get_string(last_turn, "result_ref")},
                     {"last_evidence_ref", get_string(last_turn, "evidence_ref")}

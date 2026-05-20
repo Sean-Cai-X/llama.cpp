@@ -60,6 +60,12 @@
 		if (conversation.semanticCatalogCount !== undefined) {
 			meta.push(`catalog:${conversation.semanticCatalogCount}`);
 		}
+		if (conversation.mcp18080Count) {
+			meta.push(`18080:${conversation.mcp18080Count}`);
+		}
+		if (conversation.semantic8095Count) {
+			meta.push(`8095:${conversation.semantic8095Count}`);
+		}
 		if (availableToolCount !== undefined) {
 			meta.push(`tools:${availableToolCount}`);
 		} else if (conversation.mountedToolCount !== undefined) {

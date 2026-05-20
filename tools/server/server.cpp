@@ -256,7 +256,7 @@ int main(int argc, char ** argv) {
     }
     // EXPERIMENTAL built-in tools
     if (!params.server_tools.empty()) {
-        tools.setup(params.server_tools);
+        tools.setup(params.server_tools, &params);
         SRV_WRN("%s", "-----------------\n");
         SRV_WRN("%s", "Built-in tools are enabled, do not expose server to untrusted environments\n");
         SRV_WRN("%s", "This feature is EXPERIMENTAL and may be changed in the future\n");

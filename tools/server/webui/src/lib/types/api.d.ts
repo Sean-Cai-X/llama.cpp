@@ -214,6 +214,8 @@ export interface ApiChatCompletionRequest {
 	// Reasoning parameters
 	reasoning_format?: string;
 	reasoning_level?: string;
+	auto_authorize?: boolean;
+	authorization_default?: 'allow' | 'prompt';
 	task_state?: string;
 	primary_intent?: string;
 	secondary_intents?: string[];
@@ -334,6 +336,8 @@ export interface ApiRemoteSessionSummary {
 	semantic_binding_mode?: string;
 	semantic_observability_mode?: string;
 	semantic_catalog_count?: number;
+	mcp_18080_count?: number;
+	semantic_8095_count?: number;
 	remote_dialog_semantic_list_count?: number;
 	callable_semantic_count?: number;
 	non_callable_semantic_count?: number;
@@ -342,6 +346,7 @@ export interface ApiRemoteSessionSummary {
 	all_catalog_entries_visible_in_dialog_list?: boolean;
 	catalog_is_single_source_of_truth?: boolean;
 	available_tool_classes_json?: string[];
+	semantic_catalog_json?: unknown[] | Record<string, unknown>;
 	last_task_id?: string;
 	last_result_ref?: string;
 	last_evidence_ref?: string;
@@ -367,6 +372,8 @@ export interface ApiRemoteSessionTurn {
 	takeover_relation?: string;
 	speaker_mode?: string;
 	reasoning_level?: string;
+	auto_authorize?: boolean;
+	authorization_default?: 'allow' | 'prompt';
 	prompt_purpose?: string;
 	response_mode?: string;
 	context_refs?: string[];
@@ -409,6 +416,8 @@ export interface ApiRemoteSession {
 	semantic_binding_mode?: string;
 	semantic_observability_mode?: string;
 	semantic_catalog_count?: number;
+	mcp_18080_count?: number;
+	semantic_8095_count?: number;
 	remote_dialog_semantic_list_count?: number;
 	callable_semantic_count?: number;
 	non_callable_semantic_count?: number;

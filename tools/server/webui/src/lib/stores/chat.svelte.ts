@@ -1156,6 +1156,8 @@ class ChatStore {
 							| 'medium'
 							| 'high'
 							| undefined) || 'medium',
+					auto_authorize: !!config().mcpAutoAuthorizeTools,
+					authorization_default: config().mcpAutoAuthorizeTools ? 'allow' : 'prompt',
 					prompt_purpose: auditContext?.primaryIntent || 'manual_followup',
 					context_refs: [],
 					response_mode: 'structured_short',
@@ -2126,6 +2128,9 @@ class ChatStore {
 
 		if (currentConfig.reasoningStrengthLevel)
 			apiOptions.reasoningStrengthLevel = currentConfig.reasoningStrengthLevel;
+
+		apiOptions.auto_authorize = !!currentConfig.mcpAutoAuthorizeTools;
+		apiOptions.authorization_default = currentConfig.mcpAutoAuthorizeTools ? 'allow' : 'prompt';
 
 		if (hasValue(currentConfig.temperature))
 			apiOptions.temperature = Number(currentConfig.temperature);

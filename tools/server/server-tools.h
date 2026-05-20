@@ -18,7 +18,7 @@ struct server_tool {
 struct server_tools {
     std::vector<std::unique_ptr<server_tool>> tools;
 
-    void setup(const std::vector<std::string> & enabled_tools);
+    void setup(const std::vector<std::string> & enabled_tools, const common_params * params = nullptr);
     json invoke(const std::string & name, const json & params);
     bool is_write_tool(const std::string & name) const;
 

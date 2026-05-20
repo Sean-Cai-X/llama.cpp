@@ -19,6 +19,7 @@
 		<div style="display: contents">
 			<script>
 				const CODEX_AUDIT_DB = 'LlamacppWebui';
+				const CODEX_WEBUI_CONFIG_KEY = 'LlamaCppWebui.config';
 				const CODEX_AUDIT_DB_VERSION = 2;
 				const CODEX_AUDIT_SIDEBAR_MARK = 'data-codex-audit-decorated';
 				const CODEX_REMOTE_STAGE1_KEYS = Object.freeze([
@@ -138,9 +139,18 @@
 
 				function readWebUiConfigFromStorage() {
 					const candidates = [];
+					const primaryRaw = localStorage.getItem(CODEX_WEBUI_CONFIG_KEY);
+					if (primaryRaw && primaryRaw[0] === '{') {
+						try {
+							const parsed = JSON.parse(primaryRaw);
+							if (parsed && typeof parsed === 'object') {
+								candidates.push(parsed);
+							}
+						} catch {}
+					}
 					for (let index = 0; index < localStorage.length; index += 1) {
 						const key = localStorage.key(index);
-						if (!key) continue;
+						if (!key || key === CODEX_WEBUI_CONFIG_KEY) continue;
 						const raw = localStorage.getItem(key);
 						if (!raw || raw[0] !== '{') continue;
 						try {
@@ -148,13 +158,107 @@
 							if (
 								parsed &&
 								typeof parsed === 'object' &&
-								('systemMessage' in parsed || 'reasoningStrengthLevel' in parsed || 'temperature' in parsed || 'top_p' in parsed)
+								('systemMessage' in parsed || 'reasoningStrengthLevel' in parsed || 'mcpAutoAuthorizeTools' in parsed || 'temperature' in parsed || 'top_p' in parsed)
 							) {
 								candidates.push(parsed);
 							}
 						} catch {}
 					}
 					return candidates[0] || {};
+				}
+
+				function writeWebUiConfigValue(key, value) {
+					let config = {};
+					const currentRaw = localStorage.getItem(CODEX_WEBUI_CONFIG_KEY);
+					if (currentRaw && currentRaw[0] === '{') {
+						try {
+							const parsed = JSON.parse(currentRaw);
+							if (parsed && typeof parsed === 'object') {
+								config = parsed;
+							}
+						} catch {}
+					}
+					config[key] = value;
+					localStorage.setItem(CODEX_WEBUI_CONFIG_KEY, JSON.stringify(config));
+					return config;
+				}
+
+				function isReasoningStrengthSelect(node) {
+					if (!(node instanceof HTMLSelectElement)) return false;
+					const labels = Array.from(node.options || []).map((option) => normalizeText(option.textContent || '').toLowerCase());
+					return labels.includes('low') && labels.includes('medium') && labels.includes('high');
+				}
+
+				function ensureSkipMcpConfirmControl() {
+					const reasoningSelect = Array.from(document.querySelectorAll('select')).find(isReasoningStrengthSelect);
+					if (!(reasoningSelect instanceof HTMLSelectElement) || !reasoningSelect.parentElement) return;
+					let chip = document.getElementById('codex-skip-mcp-confirm-chip');
+					if (!chip) {
+						chip = document.createElement('label');
+						chip.id = 'codex-skip-mcp-confirm-chip';
+						chip.style.cssText = [
+							'display:flex',
+							'align-items:center',
+							'gap:6px',
+							'height:32px',
+							'padding:0 10px',
+							'border-radius:999px',
+							'border:1px solid rgba(120,120,120,0.28)',
+							'background:rgba(255,255,255,0.92)',
+							'color:inherit',
+							'font-size:11px',
+							'line-height:1',
+							'white-space:nowrap',
+							'cursor:pointer',
+							'box-shadow:0 1px 4px rgba(0,0,0,0.08)'
+						].join(';');
+						chip.title = 'Skip MCP tool permission confirmation popups by default';
+						const checkbox = document.createElement('input');
+						checkbox.type = 'checkbox';
+						checkbox.id = 'codex-skip-mcp-confirm-checkbox';
+						checkbox.style.cssText = 'margin:0;accent-color:#111827;cursor:pointer;';
+						const text = document.createElement('span');
+						text.textContent = 'Skip MCP Confirm';
+						chip.appendChild(checkbox);
+						chip.appendChild(text);
+						checkbox.addEventListener('change', () => {
+							writeWebUiConfigValue('mcpAutoAuthorizeTools', !!checkbox.checked);
+						});
+					}
+					const checkbox = chip.querySelector('input[type="checkbox"]');
+					if (checkbox) {
+						checkbox.checked = !!readWebUiConfigFromStorage().mcpAutoAuthorizeTools;
+					}
+					if (chip.parentElement !== reasoningSelect.parentElement) {
+						reasoningSelect.parentElement.appendChild(chip);
+					} else if (reasoningSelect.nextElementSibling !== chip) {
+						reasoningSelect.insertAdjacentElement('afterend', chip);
+					}
+				}
+
+				function installSkipMcpConfirmFetchPatch() {
+					if (window.__codexSkipMcpConfirmFetchPatched) return;
+					window.__codexSkipMcpConfirmFetchPatched = true;
+					const originalFetch = window.fetch.bind(window);
+					window.fetch = async (input, init) => {
+						try {
+							if (typeof input === 'string' && init && typeof init.body === 'string' && /^post$/i.test(init.method || '')) {
+								const lowerUrl = input.toLowerCase();
+								const isChatCompletions = lowerUrl.includes('/v1/chat/completions');
+								const isRemoteAppend = /\/v1\/remote-sessions\/[^/]+\/append-turn/.test(lowerUrl);
+								if (isChatCompletions || isRemoteAppend) {
+									const body = JSON.parse(init.body);
+									const skipConfirm = !!readWebUiConfigFromStorage().mcpAutoAuthorizeTools;
+									body.auto_authorize = skipConfirm;
+									body.authorization_default = skipConfirm ? 'allow' : 'prompt';
+									init = { ...init, body: JSON.stringify(body) };
+								}
+							}
+						} catch (error) {
+							console.warn('[codex skip confirm] fetch patch skipped:', error);
+						}
+						return originalFetch(input, init);
+					};
 				}
 
 				function pickDefinedConfigValue(...values) {
@@ -717,6 +821,21 @@
 					return undefined;
 				}
 
+				function resolveSemanticPlaneCount(source, plane) {
+					if (!source) return undefined;
+					if (plane === 'mcp_18080') {
+						if (source.mcp_18080_count !== undefined) return source.mcp_18080_count;
+						if (source.mcp18080Count !== undefined) return source.mcp18080Count;
+					}
+					if (plane === 'semantic_8095') {
+						if (source.semantic_8095_count !== undefined) return source.semantic_8095_count;
+						if (source.semantic8095Count !== undefined) return source.semantic8095Count;
+					}
+					const catalog = parseRemoteJsonLike(source.semantic_catalog_json || source.semanticCatalogJson);
+					if (!Array.isArray(catalog)) return undefined;
+					return catalog.filter((entry) => entry && typeof entry === 'object' && entry.source_plane === plane).length;
+				}
+
 				function createRemoteJsonDetails(label, value, options = {}) {
 					const details = document.createElement('details');
 					details.open = !!options.open;
@@ -955,6 +1074,8 @@
 					if (!source) return '';
 					const meta = [];
 					const toolCount = resolveAvailableToolCount(source);
+					const mcp18080Count = resolveSemanticPlaneCount(source, 'mcp_18080');
+					const semantic8095Count = resolveSemanticPlaneCount(source, 'semantic_8095');
 					if (source.session_semantic_projection_ready === false || source.sessionSemanticProjectionReady === false) {
 						meta.push('该 session 尚未带语义投影');
 					} else if (source.semantic_binding_mode || source.semanticBindingMode) {
@@ -965,6 +1086,12 @@
 					}
 					if (source.semantic_catalog_count !== undefined || source.semanticCatalogCount !== undefined) {
 						meta.push(`catalog:${source.semantic_catalog_count ?? source.semanticCatalogCount}`);
+					}
+					if (mcp18080Count !== undefined) {
+						meta.push(`18080:${mcp18080Count}`);
+					}
+					if (semantic8095Count !== undefined) {
+						meta.push(`8095:${semantic8095Count}`);
 					}
 					if (toolCount !== undefined) {
 						meta.push(`tools:${toolCount}`);
@@ -1180,6 +1307,8 @@
 							semanticBindingMode: session.semantic_binding_mode || 'unspecified',
 							semanticObservabilityMode: session.semantic_observability_mode || 'unspecified',
 							semanticCatalogCount: session.semantic_catalog_count ?? 0,
+							mcp18080Count: session.mcp_18080_count ?? 0,
+							semantic8095Count: session.semantic_8095_count ?? 0,
 							remoteDialogSemanticListCount: session.remote_dialog_semantic_list_count ?? 0,
 							callableSemanticCount: session.callable_semantic_count ?? 0,
 							nonCallableSemanticCount: session.non_callable_semantic_count ?? 0,
@@ -1190,6 +1319,7 @@
 							availableToolClasses: Array.isArray(parseRemoteJsonLike(session.available_tool_classes_json))
 								? parseRemoteJsonLike(session.available_tool_classes_json)
 								: [],
+							semanticCatalogJson: parseRemoteJsonLike(session.semantic_catalog_json) || [],
 							lastTaskId: lastTurn.task_id || undefined,
 							currentTaskGroupId: session.task_group_id || lastTurn.task_group_id || undefined,
 							lastEvidenceRefs: lastTurn.evidence_ref ? [lastTurn.evidence_ref] : [],
@@ -1661,6 +1791,8 @@
 						semanticBindingMode: item.semantic_binding_mode || 'unspecified',
 						semanticObservabilityMode: item.semantic_observability_mode || 'unspecified',
 						semanticCatalogCount: item.semantic_catalog_count ?? 0,
+						mcp18080Count: item.mcp_18080_count ?? 0,
+						semantic8095Count: item.semantic_8095_count ?? 0,
 						remoteDialogSemanticListCount: item.remote_dialog_semantic_list_count ?? 0,
 						callableSemanticCount: item.callable_semantic_count ?? 0,
 						nonCallableSemanticCount: item.non_callable_semantic_count ?? 0,
@@ -1671,6 +1803,7 @@
 						availableToolClasses: Array.isArray(parseRemoteJsonLike(item.available_tool_classes_json))
 							? parseRemoteJsonLike(item.available_tool_classes_json)
 							: [],
+						semanticCatalogJson: parseRemoteJsonLike(item.semantic_catalog_json) || [],
 						lastTaskId: item.last_task_id || '',
 						currentTaskGroupId: item.task_group_id || '',
 						currentSourceType: item.source_type || ''
@@ -1718,6 +1851,8 @@
 						semanticBindingMode: session.semantic_binding_mode || 'unspecified',
 						semanticObservabilityMode: session.semantic_observability_mode || 'unspecified',
 						semanticCatalogCount: session.semantic_catalog_count ?? 0,
+						mcp18080Count: session.mcp_18080_count ?? 0,
+						semantic8095Count: session.semantic_8095_count ?? 0,
 						remoteDialogSemanticListCount: session.remote_dialog_semantic_list_count ?? 0,
 						callableSemanticCount: session.callable_semantic_count ?? 0,
 						nonCallableSemanticCount: session.non_callable_semantic_count ?? 0,
@@ -1728,6 +1863,7 @@
 						availableToolClasses: Array.isArray(parseRemoteJsonLike(session.available_tool_classes_json))
 							? parseRemoteJsonLike(session.available_tool_classes_json)
 							: [],
+						semanticCatalogJson: parseRemoteJsonLike(session.semantic_catalog_json) || [],
 						lastTaskId: lastTurn.task_id || '',
 						currentTaskGroupId: session.task_group_id || lastTurn.task_group_id || '',
 						currentSourceType: session.source_type || lastTurn.source_type || '',
@@ -1843,6 +1979,7 @@
 						codexRemoteSessionsRenderQueued = true;
 						window.requestAnimationFrame(async () => {
 							codexRemoteSessionsRenderQueued = false;
+							ensureSkipMcpConfirmControl();
 							decorateSidebarConversationList().catch(() => {});
 							renderRemoteConversationList().catch(() => {});
 							renderAuditSummaryPanel().catch(() => {});
@@ -1891,9 +2028,11 @@
 					};
 
 					const element = document.currentScript.parentElement;
+					installSkipMcpConfirmFetchPatch();
 
 					import("./bundle.js?v=20260424c").then((app) => {
 						app.start(element);
+						ensureSkipMcpConfirmControl();
 						installAuditSidebarObserver();
 					});
 				}

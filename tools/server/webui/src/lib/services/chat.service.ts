@@ -111,6 +111,8 @@ export class ChatService {
 			disableReasoningParsing,
 			excludeReasoningFromContext,
 			reasoningStrengthLevel,
+			auto_authorize,
+			authorization_default,
 			sessionId,
 			turnId,
 			taskState,
@@ -202,6 +204,12 @@ export class ChatService {
 			: ReasoningFormat.AUTO;
 		if (reasoningStrengthLevel) {
 			requestBody.reasoning_level = reasoningStrengthLevel;
+		}
+		if (auto_authorize !== undefined) {
+			requestBody.auto_authorize = auto_authorize;
+		}
+		if (authorization_default) {
+			requestBody.authorization_default = authorization_default;
 		}
 
 		if (temperature !== undefined) requestBody.temperature = temperature;

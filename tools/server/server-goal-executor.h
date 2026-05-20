@@ -3,6 +3,7 @@
 #include "server-clips-goal-router.h"
 #include "server-goal.h"
 
+#include <cstddef>
 #include <functional>
 #include <string>
 
@@ -12,7 +13,9 @@ public:
         int max_steps = 50;
         int max_same_action_repeat = 2;
         int max_read_files = 500;
+        int max_read_bytes = 104857600;
         int max_pending_actions_per_round = 20;
+        int max_runtime_ms = 300000;
     };
 
     using invoke_tool_fn = std::function<json(const std::string &, const json &)>;

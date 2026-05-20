@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Square } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
+	import { Checkbox } from '$lib/components/ui/checkbox';
 	import {
 		ChatFormActionAttachmentsDropdown,
 		ChatFormActionAttachmentsSheet,
@@ -250,21 +251,37 @@
 			/>
 		{/if}
 
-		<select
-			aria-label="Reasoning strength"
-			class="h-8 min-w-[5.5rem] rounded-full border border-border/60 bg-background px-3 text-xs text-foreground shadow-sm outline-none"
-			title="Reasoning strength"
-			value={String(currentConfig.reasoningStrengthLevel ?? 'medium')}
-			onclick={(e) => e.stopPropagation()}
-			onchange={(e) => {
-				const value = (e.currentTarget as HTMLSelectElement).value;
-				settingsStore.updateConfig('reasoningStrengthLevel', value);
-			}}
-		>
-			{#each reasoningStrengthOptions as level (level.value)}
-				<option value={level.value}>{level.label}</option>
-			{/each}
-		</select>
+		<div class="flex items-center gap-2">
+			<select
+				aria-label="Reasoning strength"
+				class="h-8 min-w-[5.5rem] rounded-full border border-border/60 bg-background px-3 text-xs text-foreground shadow-sm outline-none"
+				title="Reasoning strength"
+				value={String(currentConfig.reasoningStrengthLevel ?? 'medium')}
+				onclick={(e) => e.stopPropagation()}
+				onchange={(e) => {
+					const value = (e.currentTarget as HTMLSelectElement).value;
+					settingsStore.updateConfig('reasoningStrengthLevel', value);
+				}}
+			>
+				{#each reasoningStrengthOptions as level (level.value)}
+					<option value={level.value}>{level.label}</option>
+				{/each}
+			</select>
+
+			<label
+				class="flex h-8 items-center gap-2 rounded-full border border-border/60 bg-background px-3 text-[11px] text-foreground shadow-sm"
+				title="Skip MCP tool permission confirmation popups by default"
+			>
+				<Checkbox
+					checked={!!currentConfig.mcpAutoAuthorizeTools}
+					onCheckedChange={(checked) => {
+						settingsStore.updateConfig('mcpAutoAuthorizeTools', !!checked);
+					}}
+					class="size-3.5"
+				/>
+				<span class="whitespace-nowrap">Skip MCP Confirm</span>
+			</label>
+		</div>
 	</div>
 
 	{#if isLoading}

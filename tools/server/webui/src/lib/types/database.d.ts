@@ -83,6 +83,8 @@ export interface DatabaseConversation {
 	semanticBindingMode?: string;
 	semanticObservabilityMode?: string;
 	semanticCatalogCount?: number;
+	mcp18080Count?: number;
+	semantic8095Count?: number;
 	remoteDialogSemanticListCount?: number;
 	callableSemanticCount?: number;
 	nonCallableSemanticCount?: number;

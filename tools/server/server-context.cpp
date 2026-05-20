@@ -667,7 +667,7 @@ json maybe_execute_first_continue_action(
         }
 
         server_tools tools;
-        tools.setup(params.server_tools);
+        tools.setup(params.server_tools, &params);
         SRV_INF("continuation_execute: step=%d tool='%s'\n", step, tool_name.c_str());
         json result = tools.invoke(tool_name, tool_params);
         execution_chain.push_back(json{
@@ -3255,7 +3255,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_chat_with_builtin_to
     }
 
     server_tools tools;
-    tools.setup(params.server_tools);
+    tools.setup(params.server_tools, &params);
 
     constexpr int SERVER_NATIVE_TOOL_LOOP_MAX_STEPS = 128;
     for (int step = 0; step < SERVER_NATIVE_TOOL_LOOP_MAX_STEPS; ++step) {

@@ -602,6 +602,8 @@ export class DatabaseService {
 				semanticBindingMode: session.semantic_binding_mode || 'unspecified',
 				semanticObservabilityMode: session.semantic_observability_mode || 'unspecified',
 				semanticCatalogCount: session.semantic_catalog_count ?? 0,
+				mcp18080Count: session.mcp_18080_count ?? 0,
+				semantic8095Count: session.semantic_8095_count ?? 0,
 				remoteDialogSemanticListCount: session.remote_dialog_semantic_list_count ?? 0,
 				callableSemanticCount: session.callable_semantic_count ?? 0,
 				nonCallableSemanticCount: session.non_callable_semantic_count ?? 0,

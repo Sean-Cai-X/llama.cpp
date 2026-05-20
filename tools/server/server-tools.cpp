@@ -15,6 +15,10 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <optional>
+#include <algorithm>
+#include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <climits>
 #include <iterator>
@@ -176,11 +180,171 @@ static bool json_has_nonempty_value(const json & body, const std::string & key) 
     return true;
 }
 
-static constexpr const char * SERVER_TOOL_LAN_AGENT_HOST = "192.168.9.100";
-static constexpr int SERVER_TOOL_LAN_AGENT_PORT = 18080;
-static constexpr const char * SERVER_TOOL_LAN_AGENT_TOOLS_PATH = "/mcp";
-static constexpr int SERVER_TOOL_LAN_AGENT_TIMEOUT_SECS = 120;
-static constexpr int SERVER_TOOL_LAN_AGENT_MAX_CONTINUATION_STEPS = 4096;
+struct remote_lan_agent_runtime_config {
+    std::string host = "127.0.0.1";
+    int port = 18080;
+    std::string tools_path = "/mcp";
+    int timeout_secs = 120;
+    int max_continuation_steps = 4096;
+};
+
+static std::string trim_copy(std::string value) {
+    auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), not_space));
+    value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(), value.end());
+    return value;
+}
+
+static std::optional<std::string> env_string_nonempty(const char * key) {
+    const char * raw = std::getenv(key);
+    if (raw == nullptr) {
+        return std::nullopt;
+    }
+    std::string value = trim_copy(raw);
+    if (value.empty()) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+static std::optional<int> parse_int_strict(const std::string & value) {
+    try {
+        size_t pos = 0;
+        int parsed = std::stoi(value, &pos, 10);
+        if (pos != value.size()) {
+            return std::nullopt;
+        }
+        return parsed;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+static std::optional<int> env_int_value(const char * key) {
+    const auto value = env_string_nonempty(key);
+    if (!value) {
+        return std::nullopt;
+    }
+    return parse_int_strict(*value);
+}
+
+static const json * resolve_lan_agent_config_json(const common_params * params) {
+    if (params == nullptr || params->webui_config_json.empty()) {
+        return nullptr;
+    }
+    try {
+        static thread_local json parsed = json::object();
+        parsed = json::parse(params->webui_config_json);
+        if (!parsed.is_object()) {
+            return nullptr;
+        }
+        if (parsed.contains("serverTools") && parsed.at("serverTools").is_object()) {
+            const json & server_tools = parsed.at("serverTools");
+            if (server_tools.contains("lanAgent") && server_tools.at("lanAgent").is_object()) {
+                return &server_tools.at("lanAgent");
+            }
+        }
+        if (parsed.contains("lanAgent") && parsed.at("lanAgent").is_object()) {
+            return &parsed.at("lanAgent");
+        }
+        return &parsed;
+    } catch (const std::exception & e) {
+        SRV_WRN("server_tools: failed to parse webui_config_json for LAN agent config: %s\n", e.what());
+        return nullptr;
+    }
+}
+
+static std::optional<std::string> json_string_value(const json * cfg, const std::string & key) {
+    if (cfg == nullptr || !cfg->is_object() || !cfg->contains(key) || !cfg->at(key).is_string()) {
+        return std::nullopt;
+    }
+    std::string value = trim_copy(cfg->at(key).get<std::string>());
+    if (value.empty()) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+static std::optional<int> json_int_value(const json * cfg, const std::string & key) {
+    if (cfg == nullptr || !cfg->is_object() || !cfg->contains(key) || cfg->at(key).is_null()) {
+        return std::nullopt;
+    }
+    const json & value = cfg->at(key);
+    if (value.is_number_integer()) {
+        return value.get<int>();
+    }
+    if (value.is_string()) {
+        return parse_int_strict(trim_copy(value.get<std::string>()));
+    }
+    return std::nullopt;
+}
+
+static remote_lan_agent_runtime_config resolve_remote_lan_agent_runtime_config(const common_params * params) {
+    remote_lan_agent_runtime_config cfg;
+
+    if (auto value = env_string_nonempty("LLAMA_SERVER_TOOL_LAN_AGENT_HOST")) {
+        cfg.host = *value;
+    }
+    if (auto value = env_int_value("LLAMA_SERVER_TOOL_LAN_AGENT_PORT")) {
+        cfg.port = *value;
+    }
+    if (auto value = env_string_nonempty("LLAMA_SERVER_TOOL_LAN_AGENT_TOOLS_PATH")) {
+        cfg.tools_path = *value;
+    }
+    if (auto value = env_int_value("LLAMA_SERVER_TOOL_LAN_AGENT_TIMEOUT_SECS")) {
+        cfg.timeout_secs = *value;
+    }
+    if (auto value = env_int_value("LLAMA_SERVER_TOOL_LAN_AGENT_MAX_CONTINUATION_STEPS")) {
+        cfg.max_continuation_steps = *value;
+    }
+
+    const json * json_cfg = resolve_lan_agent_config_json(params);
+
+    if (auto value = json_string_value(json_cfg, "serverToolLanAgentHost")) {
+        cfg.host = *value;
+    } else if (auto value = json_string_value(json_cfg, "host")) {
+        cfg.host = *value;
+    }
+    if (auto value = json_int_value(json_cfg, "serverToolLanAgentPort")) {
+        cfg.port = *value;
+    } else if (auto value = json_int_value(json_cfg, "port")) {
+        cfg.port = *value;
+    }
+    if (auto value = json_string_value(json_cfg, "serverToolLanAgentToolsPath")) {
+        cfg.tools_path = *value;
+    } else if (auto value = json_string_value(json_cfg, "toolsPath")) {
+        cfg.tools_path = *value;
+    } else if (auto value = json_string_value(json_cfg, "path")) {
+        cfg.tools_path = *value;
+    }
+    if (auto value = json_int_value(json_cfg, "serverToolLanAgentTimeoutSecs")) {
+        cfg.timeout_secs = *value;
+    } else if (auto value = json_int_value(json_cfg, "timeoutSecs")) {
+        cfg.timeout_secs = *value;
+    }
+    if (auto value = json_int_value(json_cfg, "serverToolLanAgentMaxContinuationSteps")) {
+        cfg.max_continuation_steps = *value;
+    } else if (auto value = json_int_value(json_cfg, "maxContinuationSteps")) {
+        cfg.max_continuation_steps = *value;
+    }
+
+    if (cfg.port <= 0) {
+        cfg.port = 18080;
+    }
+    if (cfg.timeout_secs <= 0) {
+        cfg.timeout_secs = 120;
+    }
+    if (cfg.max_continuation_steps <= 0) {
+        cfg.max_continuation_steps = 4096;
+    }
+    if (cfg.tools_path.empty()) {
+        cfg.tools_path = "/mcp";
+    } else if (cfg.tools_path.front() != '/') {
+        cfg.tools_path.insert(cfg.tools_path.begin(), '/');
+    }
+
+    return cfg;
+}
 
 static json extract_remote_lan_agent_result(const json & rpc_result) {
     if (!rpc_result.is_object()) {
@@ -238,13 +402,14 @@ static json extract_remote_lan_agent_result(const json & rpc_result) {
 }
 
 static json invoke_remote_lan_agent_tool(
+        const remote_lan_agent_runtime_config & cfg,
         const std::string & tool_name,
         const json & params) {
-    httplib::Client cli(SERVER_TOOL_LAN_AGENT_HOST, SERVER_TOOL_LAN_AGENT_PORT);
+    httplib::Client cli(cfg.host, cfg.port);
     cli.set_follow_location(true);
     cli.set_connection_timeout(5, 0);
-    cli.set_read_timeout(SERVER_TOOL_LAN_AGENT_TIMEOUT_SECS, 0);
-    cli.set_write_timeout(SERVER_TOOL_LAN_AGENT_TIMEOUT_SECS, 0);
+    cli.set_read_timeout(cfg.timeout_secs, 0);
+    cli.set_write_timeout(cfg.timeout_secs, 0);
 
     static std::atomic<int> rpc_id{5000};
     json body = {
@@ -258,7 +423,7 @@ static json invoke_remote_lan_agent_tool(
     };
 
     auto res = cli.Post(
-        SERVER_TOOL_LAN_AGENT_TOOLS_PATH,
+        cfg.tools_path,
         safe_json_to_str(body),
         "application/json; charset=utf-8");
 
@@ -275,15 +440,16 @@ static json invoke_remote_lan_agent_tool(
 }
 
 static json consume_remote_lan_agent_continuation(
+        const remote_lan_agent_runtime_config & cfg,
         const std::string & initial_tool_name,
         const json & initial_params) {
     std::string tool_name = initial_tool_name;
     json params = initial_params;
     json continuation_steps = json::array();
 
-    for (int step = 0; step < SERVER_TOOL_LAN_AGENT_MAX_CONTINUATION_STEPS; ++step) {
+    for (int step = 0; step < cfg.max_continuation_steps; ++step) {
         SRV_INF("lan_agent_mcp_continue: step=%d tool='%s'\n", step, tool_name.c_str());
-        json result = invoke_remote_lan_agent_tool(tool_name, params);
+        json result = invoke_remote_lan_agent_tool(cfg, tool_name, params);
 
         const std::string status = result.value("status", "");
         const std::string status_code = result.value("status_code", "");
@@ -430,11 +596,13 @@ static json consume_remote_lan_agent_continuation(
     };
 }
 
-static json decorate_remote_lan_agent_result(json result) {
+static json decorate_remote_lan_agent_result(
+        const remote_lan_agent_runtime_config & cfg,
+        json result) {
     result["delegated_to_remote_mcp"] = true;
-    result["remote_host"] = SERVER_TOOL_LAN_AGENT_HOST;
-    result["remote_port"] = SERVER_TOOL_LAN_AGENT_PORT;
-    result["remote_path"] = SERVER_TOOL_LAN_AGENT_TOOLS_PATH;
+    result["remote_host"] = cfg.host;
+    result["remote_port"] = cfg.port;
+    result["remote_path"] = cfg.tools_path;
     return result;
 }
 
@@ -723,9 +891,9 @@ struct server_tool_file_glob_search : server_tool {
             const std::string full_path = entry.path().string();
             output_text << full_path << "\n";
             matches.push_back(full_path);
-            if (++count >= max_results) {
-                break;
-            }
+
+            ++count;
+
         }
 
         output_text << "\n---\nTotal matches: " << total_matches << "\n";
@@ -1178,11 +1346,13 @@ struct server_tool_apply_diff : server_tool {
 //
 
 struct server_tool_lan_agent_list_directory : server_tool {
-    server_tool_lan_agent_list_directory() {
+    explicit server_tool_lan_agent_list_directory(remote_lan_agent_runtime_config cfg)
+        : cfg(std::move(cfg)) {
         name = "lan_agent_list_directory";
         display_name = "LAN agent list directory";
         permission_write = false;
     }
+    remote_lan_agent_runtime_config cfg;
 
     json get_definition() override {
         return {
@@ -1206,7 +1376,7 @@ struct server_tool_lan_agent_list_directory : server_tool {
 
     json invoke(json params) override {
         SRV_INF("lan_agent_list_directory: delegating to remote LAN agent MCP continuation consumer\n", 0);
-        return decorate_remote_lan_agent_result(consume_remote_lan_agent_continuation(name, params));
+        return decorate_remote_lan_agent_result(cfg, consume_remote_lan_agent_continuation(cfg, name, params));
     }
 };
 
@@ -1215,11 +1385,13 @@ struct server_tool_lan_agent_list_directory : server_tool {
 //
 
 struct server_tool_lan_agent_read_text_file : server_tool {
-    server_tool_lan_agent_read_text_file() {
+    explicit server_tool_lan_agent_read_text_file(remote_lan_agent_runtime_config cfg)
+        : cfg(std::move(cfg)) {
         name = "lan_agent_read_text_file";
         display_name = "LAN agent read text file";
         permission_write = false;
     }
+    remote_lan_agent_runtime_config cfg;
 
     json get_definition() override {
         return {
@@ -1243,7 +1415,7 @@ struct server_tool_lan_agent_read_text_file : server_tool {
 
     json invoke(json params) override {
         SRV_INF("lan_agent_read_text_file: delegating to remote LAN agent MCP continuation consumer\n", 0);
-        return decorate_remote_lan_agent_result(consume_remote_lan_agent_continuation(name, params));
+        return decorate_remote_lan_agent_result(cfg, consume_remote_lan_agent_continuation(cfg, name, params));
     }
 };
 
@@ -1252,11 +1424,13 @@ struct server_tool_lan_agent_read_text_file : server_tool {
 //
 
 struct server_tool_lan_agent_read_directory_files : server_tool {
-    server_tool_lan_agent_read_directory_files() {
+    explicit server_tool_lan_agent_read_directory_files(remote_lan_agent_runtime_config cfg)
+        : cfg(std::move(cfg)) {
         name = "lan_agent_read_directory_files";
         display_name = "LAN agent read directory files";
         permission_write = false;
     }
+    remote_lan_agent_runtime_config cfg;
 
     json get_definition() override {
         return {
@@ -1283,7 +1457,7 @@ struct server_tool_lan_agent_read_directory_files : server_tool {
 
     json invoke(json params) override {
         SRV_INF("lan_agent_read_directory_files: delegating to remote LAN agent MCP continuation consumer\n",0);
-        return decorate_remote_lan_agent_result(consume_remote_lan_agent_continuation(name, params));
+        return decorate_remote_lan_agent_result(cfg, consume_remote_lan_agent_continuation(cfg, name, params));
     }
 };
 
@@ -1292,11 +1466,13 @@ struct server_tool_lan_agent_read_directory_files : server_tool {
 //
 
 struct server_tool_lan_agent_get_remote_session : server_tool {
-    server_tool_lan_agent_get_remote_session() {
+    explicit server_tool_lan_agent_get_remote_session(remote_lan_agent_runtime_config cfg)
+        : cfg(std::move(cfg)) {
         name = "lan_agent_get_remote_session";
         display_name = "LAN agent get remote session";
         permission_write = false;
     }
+    remote_lan_agent_runtime_config cfg;
 
     json get_definition() override {
         return {
@@ -1317,7 +1493,7 @@ struct server_tool_lan_agent_get_remote_session : server_tool {
 
     json invoke(json params) override {
         SRV_INF("lan_agent_get_remote_session: delegating to remote LAN agent MCP tool bridge\n", 0);
-        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+        return decorate_remote_lan_agent_result(cfg, invoke_remote_lan_agent_tool(cfg, name, params));
     }
 };
 
@@ -1326,11 +1502,13 @@ struct server_tool_lan_agent_get_remote_session : server_tool {
 //
 
 struct server_tool_lan_agent_resolve_remote_session_task_refs : server_tool {
-    server_tool_lan_agent_resolve_remote_session_task_refs() {
+    explicit server_tool_lan_agent_resolve_remote_session_task_refs(remote_lan_agent_runtime_config cfg)
+        : cfg(std::move(cfg)) {
         name = "lan_agent_resolve_remote_session_task_refs";
         display_name = "LAN agent resolve remote session task refs";
         permission_write = false;
     }
+    remote_lan_agent_runtime_config cfg;
 
     json get_definition() override {
         return {
@@ -1354,7 +1532,7 @@ struct server_tool_lan_agent_resolve_remote_session_task_refs : server_tool {
 
     json invoke(json params) override {
         SRV_INF("lan_agent_resolve_remote_session_task_refs: delegating to remote LAN agent MCP tool bridge\n", 0);
-        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+        return decorate_remote_lan_agent_result(cfg, invoke_remote_lan_agent_tool(cfg, name, params));
     }
 };
 
@@ -1363,11 +1541,13 @@ struct server_tool_lan_agent_resolve_remote_session_task_refs : server_tool {
 //
 
 struct server_tool_lan_agent_list_remote_session_tasks : server_tool {
-    server_tool_lan_agent_list_remote_session_tasks() {
+    explicit server_tool_lan_agent_list_remote_session_tasks(remote_lan_agent_runtime_config cfg)
+        : cfg(std::move(cfg)) {
         name = "lan_agent_list_remote_session_tasks";
         display_name = "LAN agent list remote session tasks";
         permission_write = false;
     }
+    remote_lan_agent_runtime_config cfg;
 
     json get_definition() override {
         return {
@@ -1391,7 +1571,7 @@ struct server_tool_lan_agent_list_remote_session_tasks : server_tool {
 
     json invoke(json params) override {
         SRV_INF("lan_agent_list_remote_session_tasks: delegating to remote LAN agent MCP tool bridge\n", 0);
-        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+        return decorate_remote_lan_agent_result(cfg, invoke_remote_lan_agent_tool(cfg, name, params));
     }
 };
 
@@ -1400,11 +1580,13 @@ struct server_tool_lan_agent_list_remote_session_tasks : server_tool {
 //
 
 struct server_tool_lan_agent_analyze_dialog_slices : server_tool {
-    server_tool_lan_agent_analyze_dialog_slices() {
+    explicit server_tool_lan_agent_analyze_dialog_slices(remote_lan_agent_runtime_config cfg)
+        : cfg(std::move(cfg)) {
         name = "lan_agent_analyze_dialog_slices";
         display_name = "LAN agent analyze dialog slices";
         permission_write = false;
     }
+    remote_lan_agent_runtime_config cfg;
 
     json get_definition() override {
         return {
@@ -1426,7 +1608,7 @@ struct server_tool_lan_agent_analyze_dialog_slices : server_tool {
 
     json invoke(json params) override {
         SRV_INF("lan_agent_analyze_dialog_slices: delegating to remote LAN agent MCP tool bridge\n", 0);
-        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+        return decorate_remote_lan_agent_result(cfg, invoke_remote_lan_agent_tool(cfg, name, params));
     }
 };
 
@@ -1435,11 +1617,13 @@ struct server_tool_lan_agent_analyze_dialog_slices : server_tool {
 //
 
 struct server_tool_lan_agent_list_recent_remote_events : server_tool {
-    server_tool_lan_agent_list_recent_remote_events() {
+    explicit server_tool_lan_agent_list_recent_remote_events(remote_lan_agent_runtime_config cfg)
+        : cfg(std::move(cfg)) {
         name = "lan_agent_list_recent_remote_events";
         display_name = "LAN agent list recent remote events";
         permission_write = false;
     }
+    remote_lan_agent_runtime_config cfg;
 
     json get_definition() override {
         return {
@@ -1466,7 +1650,7 @@ struct server_tool_lan_agent_list_recent_remote_events : server_tool {
 
     json invoke(json params) override {
         SRV_INF("lan_agent_list_recent_remote_events: delegating to remote LAN agent MCP tool bridge\n", 0);
-        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+        return decorate_remote_lan_agent_result(cfg, invoke_remote_lan_agent_tool(cfg, name, params));
     }
 };
 
@@ -1475,11 +1659,13 @@ struct server_tool_lan_agent_list_recent_remote_events : server_tool {
 //
 
 struct server_tool_lan_agent_get_task : server_tool {
-    server_tool_lan_agent_get_task() {
+    explicit server_tool_lan_agent_get_task(remote_lan_agent_runtime_config cfg)
+        : cfg(std::move(cfg)) {
         name = "lan_agent_get_task";
         display_name = "LAN agent get task";
         permission_write = false;
     }
+    remote_lan_agent_runtime_config cfg;
 
     json get_definition() override {
         return {
@@ -1500,7 +1686,7 @@ struct server_tool_lan_agent_get_task : server_tool {
 
     json invoke(json params) override {
         SRV_INF("lan_agent_get_task: delegating to remote LAN agent MCP tool bridge\n", 0);
-        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+        return decorate_remote_lan_agent_result(cfg, invoke_remote_lan_agent_tool(cfg, name, params));
     }
 };
 
@@ -1509,11 +1695,13 @@ struct server_tool_lan_agent_get_task : server_tool {
 //
 
 struct server_tool_lan_agent_resolve_task_result : server_tool {
-    server_tool_lan_agent_resolve_task_result() {
+    explicit server_tool_lan_agent_resolve_task_result(remote_lan_agent_runtime_config cfg)
+        : cfg(std::move(cfg)) {
         name = "lan_agent_resolve_task_result";
         display_name = "LAN agent resolve task result";
         permission_write = false;
     }
+    remote_lan_agent_runtime_config cfg;
 
     json get_definition() override {
         return {
@@ -1535,7 +1723,7 @@ struct server_tool_lan_agent_resolve_task_result : server_tool {
 
     json invoke(json params) override {
         SRV_INF("lan_agent_resolve_task_result: delegating to remote LAN agent MCP tool bridge\n", 0);
-        return decorate_remote_lan_agent_result(invoke_remote_lan_agent_tool(name, params));
+        return decorate_remote_lan_agent_result(cfg, invoke_remote_lan_agent_tool(cfg, name, params));
     }
 };
 
@@ -1543,22 +1731,22 @@ struct server_tool_lan_agent_resolve_task_result : server_tool {
 // public API
 //
 
-static std::vector<std::unique_ptr<server_tool>> build_tools() {
+static std::vector<std::unique_ptr<server_tool>> build_tools(const remote_lan_agent_runtime_config & lan_agent_cfg) {
     std::vector<std::unique_ptr<server_tool>> tools;
     tools.push_back(std::make_unique<server_tool_read_file>());
     tools.push_back(std::make_unique<server_tool_file_info>());
     tools.push_back(std::make_unique<server_tool_file_glob_search>());
     tools.push_back(std::make_unique<server_tool_grep_search>());
-    tools.push_back(std::make_unique<server_tool_lan_agent_list_directory>());
-    tools.push_back(std::make_unique<server_tool_lan_agent_read_text_file>());
-    tools.push_back(std::make_unique<server_tool_lan_agent_read_directory_files>());
-    tools.push_back(std::make_unique<server_tool_lan_agent_get_task>());
-    tools.push_back(std::make_unique<server_tool_lan_agent_resolve_task_result>());
-    tools.push_back(std::make_unique<server_tool_lan_agent_list_remote_session_tasks>());
-    tools.push_back(std::make_unique<server_tool_lan_agent_get_remote_session>());
-    tools.push_back(std::make_unique<server_tool_lan_agent_resolve_remote_session_task_refs>());
-    tools.push_back(std::make_unique<server_tool_lan_agent_analyze_dialog_slices>());
-    tools.push_back(std::make_unique<server_tool_lan_agent_list_recent_remote_events>());
+    tools.push_back(std::make_unique<server_tool_lan_agent_list_directory>(lan_agent_cfg));
+    tools.push_back(std::make_unique<server_tool_lan_agent_read_text_file>(lan_agent_cfg));
+    tools.push_back(std::make_unique<server_tool_lan_agent_read_directory_files>(lan_agent_cfg));
+    tools.push_back(std::make_unique<server_tool_lan_agent_get_task>(lan_agent_cfg));
+    tools.push_back(std::make_unique<server_tool_lan_agent_resolve_task_result>(lan_agent_cfg));
+    tools.push_back(std::make_unique<server_tool_lan_agent_list_remote_session_tasks>(lan_agent_cfg));
+    tools.push_back(std::make_unique<server_tool_lan_agent_get_remote_session>(lan_agent_cfg));
+    tools.push_back(std::make_unique<server_tool_lan_agent_resolve_remote_session_task_refs>(lan_agent_cfg));
+    tools.push_back(std::make_unique<server_tool_lan_agent_analyze_dialog_slices>(lan_agent_cfg));
+    tools.push_back(std::make_unique<server_tool_lan_agent_list_recent_remote_events>(lan_agent_cfg));
     tools.push_back(std::make_unique<server_tool_exec_shell_command>());
     tools.push_back(std::make_unique<server_tool_write_file>());
     tools.push_back(std::make_unique<server_tool_edit_file>());
@@ -1681,10 +1869,11 @@ static server_goal_execution_controller::loop_policy build_loop_policy(const jso
     return policy;
 }
 
-void server_tools::setup(const std::vector<std::string> & enabled_tools) {
+void server_tools::setup(const std::vector<std::string> & enabled_tools, const common_params * params) {
     if (!enabled_tools.empty()) {
         std::unordered_set<std::string> enabled_set(enabled_tools.begin(), enabled_tools.end());
-        auto all_tools = build_tools();
+        const auto lan_agent_cfg = resolve_remote_lan_agent_runtime_config(params);
+        auto all_tools = build_tools(lan_agent_cfg);
 
         tools.clear();
         for (auto & t : all_tools) {
