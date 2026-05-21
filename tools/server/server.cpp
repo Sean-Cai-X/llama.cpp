@@ -263,6 +263,7 @@ int main(int argc, char ** argv) {
         SRV_WRN("%s", "-----------------\n");
         ctx_http.get ("/tools",           ex_wrapper(tools.handle_get));
         ctx_http.post("/tools",           ex_wrapper(tools.handle_post));
+        ctx_http.post("/v1/debug/goal/run",           ex_wrapper(tools.handle_post));
     }
 
     //
