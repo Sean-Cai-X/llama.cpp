@@ -2,6 +2,7 @@
 
 #include "log.h"
 #include "rag_metadata.h"
+#include "rag_storage.h"
 #include "repo_scanner.h"
 #include "server-trace-registry.h"
 
@@ -15,6 +16,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace {
 
@@ -66,6 +68,177 @@ std::string generate_trace_token(const char * prefix) {
     const uint64_t now_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
     const uint64_t seq = ++g_rag_trace_counter;
     return std::string(prefix) + "-" + std::to_string(now_ms) + "-" + std::to_string(seq);
+}
+
+json build_clips_bundle_summary(
+        const RagClipsFactBundle & bundle,
+        const std::vector<std::string> & assertions) {
+    return json{
+        {"query", bundle.query_context.query},
+        {"retrieval_mode", bundle.query_context.retrieval_mode},
+        {"result_count", bundle.query_context.result_count},
+        {"node_count", static_cast<int>(bundle.nodes.size())},
+        {"slice_link_count", static_cast<int>(bundle.slice_links.size())},
+        {"inference_rule_count", static_cast<int>(bundle.inference_rules.size())},
+        {"graph_node_count", static_cast<int>(bundle.meta_graph.nodes.size())},
+        {"graph_edge_count", static_cast<int>(bundle.meta_graph.edges.size())},
+        {"assertion_count", static_cast<int>(assertions.size())},
+    };
+}
+
+json build_clips_store_refs(
+        const std::string & base_path,
+        const std::string & run_kind,
+        const std::string & trace_id,
+        const std::string & query_id,
+        const json & admission_report) {
+    json slice_index_refs = json::array();
+    std::unordered_set<std::string> emitted_slice_ids;
+    if (admission_report.is_array()) {
+        for (const auto & item : admission_report) {
+            if (!item.is_object()) {
+                continue;
+            }
+            const std::string slice_id = item.value("slice_id", "");
+            if (slice_id.empty() || !emitted_slice_ids.insert(slice_id).second) {
+                continue;
+            }
+            slice_index_refs.push_back(json{
+                {"slice_id", slice_id},
+                {"index_path", rag_storage_clips_slice_index_path(base_path, slice_id)},
+            });
+        }
+    }
+
+    return json{
+        {"run_kind", run_kind},
+        {"clips_runs_log_path", rag_storage_clips_runs_log_path(base_path)},
+        {"run_snapshot_path", rag_storage_clips_run_snapshot_path(base_path, run_kind, trace_id)},
+        {"query_index_path", rag_storage_clips_query_index_path(base_path, query_id)},
+        {"slice_index_refs", std::move(slice_index_refs)},
+    };
+}
+
+void persist_clips_run_sidecar(
+        const std::string & base_path,
+        const std::string & run_kind,
+        const RagClipsFactBundle & bundle,
+        const std::vector<std::string> & assertions,
+        const RagClipsRunResult & run_result,
+        const json & payload) {
+    if (base_path.empty()) {
+        return;
+    }
+
+    try {
+        const json bundle_summary = build_clips_bundle_summary(bundle, assertions);
+        const std::string request_id = payload.value("request_id", "");
+        const std::string trace_id = payload.value("trace_id", "");
+        const std::string query_id = payload.value("query_id", "");
+        const std::string query_text = payload.value("query", "");
+        const std::string retrieval_mode = payload.value("retrieval_mode", "");
+        const std::string route = payload.value("admission_summary", json::object()).value(
+            "route",
+            payload.value("admission_layer_input", json::object()).value("route", ""));
+        const std::string dominant_decision =
+            payload.value("admission_summary", json::object()).value("dominant_decision", "");
+        const json summary_record = {
+            {"record_model", "rag_clips_run_store_v1"},
+            {"run_kind", run_kind},
+            {"request_id", request_id},
+            {"trace_id", trace_id},
+            {"query_id", query_id},
+            {"query", query_text},
+            {"retrieval_mode", retrieval_mode},
+            {"ok", payload.value("ok", false)},
+            {"message", payload.value("message", "")},
+            {"route", route},
+            {"dominant_decision", dominant_decision},
+            {"bundle_summary", bundle_summary},
+            {"runner_diagnostics", json{
+                {"backend", run_result.backend},
+                {"facts_asserted", run_result.facts_asserted},
+                {"facts_after_run_count", run_result.facts_after_run_count},
+                {"activations_before_run_count", run_result.activations_before_run_count},
+                {"rules_fired", run_result.rules_fired},
+                {"memory_pool_mb", run_result.memory_pool_mb},
+                {"batch_fact_limit", run_result.batch_fact_limit},
+                {"facts_rejected_by_limit", run_result.facts_rejected_by_limit},
+                {"loaded_rule_file_count", static_cast<int>(run_result.loaded_rule_files.size())},
+            }},
+            {"admission_summary", payload.value("admission_summary", json::object())},
+            {"approved_context_count", payload.value("approved_context_count", 0)},
+            {"admission_report_count", payload.value("admission_report", json::array()).size()},
+        };
+
+        RagFileStorage storage(base_path);
+        storage.save_manifest();
+
+        rag_storage_append_jsonl_record(
+            rag_storage_clips_runs_log_path(base_path),
+            summary_record);
+
+        rag_storage_append_jsonl_record(
+            rag_storage_clips_query_index_path(base_path, query_id),
+            json{
+                {"record_model", "rag_clips_query_ref_v1"},
+                {"run_kind", run_kind},
+                {"request_id", request_id},
+                {"trace_id", trace_id},
+                {"query_id", query_id},
+                {"query", query_text},
+                {"retrieval_mode", retrieval_mode},
+                {"route", route},
+                {"dominant_decision", dominant_decision},
+            });
+
+        const json admission_report = payload.value("admission_report", json::array());
+        if (admission_report.is_array()) {
+            for (const auto & item : admission_report) {
+                if (!item.is_object()) {
+                    continue;
+                }
+                const std::string slice_id = item.value("slice_id", "");
+                if (slice_id.empty()) {
+                    continue;
+                }
+                rag_storage_append_jsonl_record(
+                    rag_storage_clips_slice_index_path(base_path, slice_id),
+                    json{
+                        {"record_model", "rag_clips_slice_ref_v1"},
+                        {"run_kind", run_kind},
+                        {"request_id", request_id},
+                        {"trace_id", trace_id},
+                        {"query_id", query_id},
+                        {"slice_id", slice_id},
+                        {"decision", item.value("decision", "")},
+                        {"reason", item.value("reason", "")},
+                        {"rule_id", item.value("rule_id", "")},
+                        {"next_action", item.value("next_action", "")},
+                        {"route", route},
+                    });
+            }
+        }
+
+        const std::string snapshot_path =
+            rag_storage_clips_run_snapshot_path(base_path, run_kind, trace_id);
+        if (!snapshot_path.empty()) {
+            json snapshot = {
+                {"record_model", "rag_clips_run_snapshot_v1"},
+                {"run_kind", run_kind},
+                {"request_id", request_id},
+                {"trace_id", trace_id},
+                {"query_id", query_id},
+                {"bundle_summary", bundle_summary},
+                {"loaded_rule_files", run_result.loaded_rule_files},
+                {"assertions", assertions},
+                {"admission_decisions", run_result.admission_decisions},
+                {"response", payload},
+            };
+            rag_storage_write_json_file(snapshot_path, snapshot);
+        }
+    } catch (...) {
+    }
 }
 
 json build_trace_payload(const RagTraceContext & trace, bool rag_enabled, bool clips_enabled) {
@@ -580,7 +753,7 @@ json RagServerRuntime::build_chat_context_payload(const json & body, const std::
     const json approved_context = build_approved_context_items(results, bundle, run_result.admission_report, trace);
     const std::string route = map_clips_decision_route(run_result.dominant_decision);
 
-    return json{
+    json payload = json{
         {"request_id", trace.request_id},
         {"trace_id", trace.trace_id},
         {"query_id", trace.query_id},
@@ -611,6 +784,23 @@ json RagServerRuntime::build_chat_context_payload(const json & body, const std::
         }},
         {"status", build_status_payload()},
     };
+
+    payload["store_refs"] = build_clips_store_refs(
+        params_base_.rag_index_path,
+        "chat_context",
+        trace.trace_id,
+        trace.query_id,
+        payload.value("admission_report", json::array()));
+
+    persist_clips_run_sidecar(
+        params_base_.rag_index_path,
+        "chat_context",
+        bundle,
+        assertions,
+        run_result,
+        payload);
+
+    return payload;
 }
 
 json RagServerRuntime::build_clips_meta_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const {
@@ -815,7 +1005,7 @@ json RagServerRuntime::build_clips_run_payload(const json & body, const std::str
 
         LOG_INF("%s: assembling compact CLIPS run payload route='%s'\n", __func__, route.c_str());
 
-        return json{
+        json payload = json{
             {"request_id", trace.request_id},
             {"trace_id", trace.trace_id},
             {"query_id", trace.query_id},
@@ -885,6 +1075,23 @@ json RagServerRuntime::build_clips_run_payload(const json & body, const std::str
                 {"facts_rejected_by_limit", run_result.facts_rejected_by_limit},
             }},
         };
+
+        payload["store_refs"] = build_clips_store_refs(
+            params_base_.rag_index_path,
+            "clips_run",
+            trace.trace_id,
+            trace.query_id,
+            payload.value("admission_report", json::array()));
+
+        persist_clips_run_sidecar(
+            params_base_.rag_index_path,
+            "clips_run",
+            bundle,
+            assertions,
+            run_result,
+            payload);
+
+        return payload;
     } catch (const std::exception & e) {
         LOG_ERR("%s: CLIPS run threw exception: %s\n", __func__, e.what());
         return json{
@@ -1082,6 +1289,13 @@ json RagServerRuntime::build_status_payload() const {
         {"chunk_count", chunk_count},
         {"vector_map_count", vector_map_count},
         {"raw_slice_count", raw_slice_count},
+        {"storage", json{
+            {"backend", "file_sidecar"},
+            {"manifest_path", rag_storage_manifest_path(params_base_.rag_index_path)},
+            {"vector_map_path", rag_storage_vector_map_path(params_base_.rag_index_path)},
+            {"raw_slices_path", rag_storage_raw_slices_path(params_base_.rag_index_path)},
+            {"clips_runs_log_path", rag_storage_clips_runs_log_path(params_base_.rag_index_path)},
+        }},
         {"last_job_kind", last_job_kind},
         {"last_reset_before_add", last_reset_before_add},
         {"last_error", last_error},

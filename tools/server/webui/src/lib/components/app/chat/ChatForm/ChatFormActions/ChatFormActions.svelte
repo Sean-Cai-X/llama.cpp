@@ -275,7 +275,13 @@
 				<Checkbox
 					checked={!!currentConfig.mcpAutoAuthorizeTools}
 					onCheckedChange={(checked) => {
-						settingsStore.updateConfig('mcpAutoAuthorizeTools', !!checked);
+						const nextValue = !!checked;
+						settingsStore.updateConfig('mcpAutoAuthorizeTools', nextValue);
+						try {
+							localStorage.setItem('codex.mcp.requireApproval', nextValue ? 'false' : 'true');
+						} catch {
+							// Ignore storage write failures so the visible setting still updates.
+						}
 					}}
 					class="size-3.5"
 				/>

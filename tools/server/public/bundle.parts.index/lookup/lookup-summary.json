@@ -1,0 +1,159 @@
+{
+  "refined_chunk_count": 54,
+  "tag_group_count": 7,
+  "symbol_group_count": 6065,
+  "parent_group_count": 52,
+  "file_group_count": 54,
+  "largest_symbol_groups": [
+    {
+      "symbol": "_3",
+      "count": 3
+    },
+    {
+      "symbol": "pdf_worker_min",
+      "count": 3
+    },
+    {
+      "symbol": "pdf_worker_min$1",
+      "count": 3
+    },
+    {
+      "symbol": "app",
+      "count": 2
+    },
+    {
+      "symbol": "start",
+      "count": 2
+    },
+    {
+      "symbol": "__accessCheck",
+      "count": 1
+    },
+    {
+      "symbol": "__accessCheck2",
+      "count": 1
+    },
+    {
+      "symbol": "__domTree",
+      "count": 1
+    },
+    {
+      "symbol": "__privateAdd",
+      "count": 1
+    },
+    {
+      "symbol": "__privateAdd2",
+      "count": 1
+    },
+    {
+      "symbol": "__privateGet",
+      "count": 1
+    },
+    {
+      "symbol": "__privateGet2",
+      "count": 1
+    },
+    {
+      "symbol": "__privateMethod",
+      "count": 1
+    },
+    {
+      "symbol": "__privateMethod2",
+      "count": 1
+    },
+    {
+      "symbol": "__privateSet",
+      "count": 1
+    },
+    {
+      "symbol": "__privateSet2",
+      "count": 1
+    },
+    {
+      "symbol": "__privateWrapper",
+      "count": 1
+    },
+    {
+      "symbol": "__typeError",
+      "count": 1
+    },
+    {
+      "symbol": "__typeError2",
+      "count": 1
+    },
+    {
+      "symbol": "__vitePreload",
+      "count": 1
+    },
+    {
+      "symbol": "_0",
+      "count": 1
+    },
+    {
+      "symbol": "_1",
+      "count": 1
+    },
+    {
+      "symbol": "_1c",
+      "count": 1
+    },
+    {
+      "symbol": "_1c_1",
+      "count": 1
+    },
+    {
+      "symbol": "_2",
+      "count": 1
+    },
+    {
+      "symbol": "_a",
+      "count": 1
+    },
+    {
+      "symbol": "_addFormats",
+      "count": 1
+    },
+    {
+      "symbol": "_any",
+      "count": 1
+    },
+    {
+      "symbol": "_array",
+      "count": 1
+    },
+    {
+      "symbol": "_base64",
+      "count": 1
+    }
+  ],
+  "largest_tag_groups": [
+    {
+      "tag": "highlightjs",
+      "count": 33
+    },
+    {
+      "tag": "svelte-compiled",
+      "count": 19
+    },
+    {
+      "tag": "mcp",
+      "count": 18
+    },
+    {
+      "tag": "pdfjs",
+      "count": 16
+    },
+    {
+      "tag": "chat-ui",
+      "count": 10
+    },
+    {
+      "tag": "katex",
+      "count": 5
+    },
+    {
+      "tag": "zod",
+      "count": 3
+    }
+  ]
+}

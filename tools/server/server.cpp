@@ -202,7 +202,106 @@ int main(int argc, char ** argv) {
     ctx_http.post("/v1/completions",           ex_wrapper(routes.post_completions_oai));
     ctx_http.post("/chat/completions",         ex_wrapper(routes.post_chat_completions));
     ctx_http.post("/v1/chat/completions",      ex_wrapper(routes.post_chat_completions));
-    ctx_http.post("/v1/remote-sessions/new-turn", ex_wrapper(routes.post_remote_session_new_turn));
+    // Phase 4-B: make remote-session new-turn goal-aware.
+    //
+    // Normal remote-session requests keep the original completion behavior.
+    // Requests carrying a goal_type in either top-level body or metadata are
+    // routed to the same GoalExecutionController path used by /tools and
+    // /v1/debug/goal/run.
+    //
+    // Example accepted body:
+    //
+    // {
+    //   "session_id": "...",
+    //   "messages": [{ "role": "user", "content": "..." }],
+    //   "metadata": {
+    //     "goal_type": "READ_ALL_CODE_FILES",
+    //     "root_path": "C:/tmp/project",
+    //     "include": ["**/*.cpp", "**/*.h"],
+    //     "exclude": ["**/build/**"],
+    //     "read_chunk_lines": 500
+    //   }
+    // }
+    //
+    // This keeps the model out of the middle of server-side goal closure:
+    // new-turn becomes a semantic envelope, while /tools executes the goal.
+    auto post_remote_session_new_turn_goal_aware =
+        [&](const server_http_req & req) -> server_http_res_ptr {
+            json body = json::object();
+            try {
+                body = json::parse(req.body);
+            } catch (...) {
+                return routes.post_remote_session_new_turn(req);
+            }
+
+            const json metadata =
+                body.contains("metadata") && body.at("metadata").is_object()
+                    ? body.at("metadata")
+                    : json::object();
+
+            const bool has_goal_request =
+                (body.contains("goal") && body.at("goal").is_object()) ||
+                (body.contains("goal_type") && body.at("goal_type").is_string()) ||
+                (metadata.contains("goal_type") && metadata.at("goal_type").is_string());
+
+            if (!has_goal_request) {
+                return routes.post_remote_session_new_turn(req);
+            }
+
+            if (params.server_tools.empty()) {
+                auto res = std::make_unique<server_http_res>();
+                res->status = 400;
+                res->data = safe_json_to_str({
+                    {"error", format_error_response(
+                        "goal_type was provided, but built-in tools are disabled; start llama-server with --tools",
+                        ERROR_TYPE_INVALID_REQUEST)}
+                });
+                return res;
+            }
+
+            json goal_body = json::object();
+            if (body.contains("goal") && body.at("goal").is_object()) {
+                goal_body = body.at("goal");
+            }
+
+            auto copy_if_absent = [&](const json & src, const char * key) {
+                if (!goal_body.contains(key) && src.contains(key) && !src.at(key).is_null()) {
+                    goal_body[key] = src.at(key);
+                }
+            };
+
+            const char * goal_keys[] = {
+                "goal_id",
+                "request_id",
+                "trace_id",
+                "goal_type",
+                "root_path",
+                "include",
+                "exclude",
+                "read_chunk_lines",
+                "max_steps",
+                "max_runtime_ms",
+                "max_same_action_repeat",
+                "max_read_files",
+                "max_read_bytes",
+                "max_pending_actions_per_round"
+            };
+
+            for (const char * key : goal_keys) {
+                copy_if_absent(body, key);
+                copy_if_absent(metadata, key);
+            }
+
+            // Preserve useful remote-session IDs for trace correlation when present.
+            copy_if_absent(body, "session_id");
+            copy_if_absent(metadata, "session_id");
+
+            server_http_req goal_req = req;
+            goal_req.body = safe_json_to_str(goal_body);
+            return tools.handle_post(goal_req);
+        };
+
+    ctx_http.post("/v1/remote-sessions/new-turn", ex_wrapper(post_remote_session_new_turn_goal_aware));
     ctx_http.post("/v1/remote-sessions/:session_id/append-turn", ex_wrapper(routes.post_remote_session_append_turn));
     ctx_http.get ("/v1/remote-sessions",       ex_wrapper(routes.get_remote_sessions));
     ctx_http.get ("/v1/remote-sessions/:session_id", ex_wrapper(routes.get_remote_session));

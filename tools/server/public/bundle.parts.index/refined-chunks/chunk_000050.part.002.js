@@ -1,0 +1,1 @@
+freeze(Object.defineProperty({__proto__:null,default:pdf_worker_min},Symbol.toStringTag,{value:"Module"}));

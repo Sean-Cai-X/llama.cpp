@@ -1,0 +1,1 @@
+const _3=Object.freeze(Object.defineProperty({__proto__:null,component:_page,universal:_page$1},Symbol.toStringTag,{value:"Module"}

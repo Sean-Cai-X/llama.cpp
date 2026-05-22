@@ -1,0 +1,33 @@
+{
+  "latest_label": "smoke10b",
+  "keep_limit": 20,
+  "latest_records_file": "bundle.parts.index\\fingerprints\\snapshots\\latest.records.json",
+  "latest_manifest_file": "bundle.parts.index\\fingerprints\\snapshots\\latest.manifest.json",
+  "snapshot_count": 3,
+  "snapshots": [
+    {
+      "label": "smoke10b",
+      "created_at": "2026-05-21T09:08:51.069Z",
+      "records_file": "bundle.parts.index\\fingerprints\\snapshots\\fingerprints.smoke10b.records.json",
+      "manifest_file": "bundle.parts.index\\fingerprints\\snapshots\\fingerprints.smoke10b.manifest.json",
+      "record_count": 54,
+      "duplicate_content_group_count": 0
+    },
+    {
+      "label": "smoke10",
+      "created_at": "2026-05-21T09:08:10.553Z",
+      "records_file": "bundle.parts.index\\fingerprints\\snapshots\\fingerprints.smoke10.records.json",
+      "manifest_file": "bundle.parts.index\\fingerprints\\snapshots\\fingerprints.smoke10.manifest.json",
+      "record_count": 54,
+      "duplicate_content_group_count": 0
+    },
+    {
+      "label": "baseline",
+      "created_at": "2026-05-21T09:02:47.995Z",
+      "records_file": "bundle.parts.index\\fingerprints\\snapshots\\fingerprints.baseline.records.json",
+      "manifest_file": "bundle.parts.index\\fingerprints\\snapshots\\fingerprints.baseline.manifest.json",
+      "record_count": 54,
+      "duplicate_content_group_count": 0
+    }
+  ]
+}

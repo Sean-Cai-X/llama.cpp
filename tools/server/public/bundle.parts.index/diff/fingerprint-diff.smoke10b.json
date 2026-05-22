@@ -1,0 +1,280 @@
+{
+  "label": "smoke10b",
+  "previous_file": "D:\\Codex-WorkDir\\Sean_WorkDir\\llama.cpp-b8851\\tools\\server\\public\\bundle.parts.index\\fingerprints\\snapshots\\latest.records.json",
+  "current_file": "D:\\Codex-WorkDir\\Sean_WorkDir\\llama.cpp-b8851\\tools\\server\\public\\bundle.parts.index\\fingerprints\\fingerprints.records.json",
+  "added": [],
+  "removed": [],
+  "changed": [],
+  "unchanged": [
+    {
+      "id": "chunk_000000",
+      "parent_chunk_id": "chunk_000000",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000000.js"
+    },
+    {
+      "id": "chunk_000001",
+      "parent_chunk_id": "chunk_000001",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000001.js"
+    },
+    {
+      "id": "chunk_000002",
+      "parent_chunk_id": "chunk_000002",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000002.js"
+    },
+    {
+      "id": "chunk_000003",
+      "parent_chunk_id": "chunk_000003",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000003.js"
+    },
+    {
+      "id": "chunk_000004",
+      "parent_chunk_id": "chunk_000004",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000004.js"
+    },
+    {
+      "id": "chunk_000005",
+      "parent_chunk_id": "chunk_000005",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000005.js"
+    },
+    {
+      "id": "chunk_000006",
+      "parent_chunk_id": "chunk_000006",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000006.js"
+    },
+    {
+      "id": "chunk_000007",
+      "parent_chunk_id": "chunk_000007",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000007.js"
+    },
+    {
+      "id": "chunk_000008",
+      "parent_chunk_id": "chunk_000008",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000008.js"
+    },
+    {
+      "id": "chunk_000009",
+      "parent_chunk_id": "chunk_000009",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000009.js"
+    },
+    {
+      "id": "chunk_000010",
+      "parent_chunk_id": "chunk_000010",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000010.js"
+    },
+    {
+      "id": "chunk_000011",
+      "parent_chunk_id": "chunk_000011",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000011.js"
+    },
+    {
+      "id": "chunk_000012",
+      "parent_chunk_id": "chunk_000012",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000012.js"
+    },
+    {
+      "id": "chunk_000013",
+      "parent_chunk_id": "chunk_000013",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000013.js"
+    },
+    {
+      "id": "chunk_000014",
+      "parent_chunk_id": "chunk_000014",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000014.js"
+    },
+    {
+      "id": "chunk_000015",
+      "parent_chunk_id": "chunk_000015",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000015.js"
+    },
+    {
+      "id": "chunk_000016",
+      "parent_chunk_id": "chunk_000016",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000016.js"
+    },
+    {
+      "id": "chunk_000017",
+      "parent_chunk_id": "chunk_000017",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000017.js"
+    },
+    {
+      "id": "chunk_000018",
+      "parent_chunk_id": "chunk_000018",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000018.js"
+    },
+    {
+      "id": "chunk_000019",
+      "parent_chunk_id": "chunk_000019",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000019.js"
+    },
+    {
+      "id": "chunk_000020",
+      "parent_chunk_id": "chunk_000020",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000020.js"
+    },
+    {
+      "id": "chunk_000021",
+      "parent_chunk_id": "chunk_000021",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000021.js"
+    },
+    {
+      "id": "chunk_000022",
+      "parent_chunk_id": "chunk_000022",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000022.js"
+    },
+    {
+      "id": "chunk_000023",
+      "parent_chunk_id": "chunk_000023",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000023.js"
+    },
+    {
+      "id": "chunk_000024",
+      "parent_chunk_id": "chunk_000024",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000024.js"
+    },
+    {
+      "id": "chunk_000025",
+      "parent_chunk_id": "chunk_000025",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000025.js"
+    },
+    {
+      "id": "chunk_000026",
+      "parent_chunk_id": "chunk_000026",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000026.js"
+    },
+    {
+      "id": "chunk_000027",
+      "parent_chunk_id": "chunk_000027",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000027.js"
+    },
+    {
+      "id": "chunk_000028",
+      "parent_chunk_id": "chunk_000028",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000028.js"
+    },
+    {
+      "id": "chunk_000029",
+      "parent_chunk_id": "chunk_000029",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000029.js"
+    },
+    {
+      "id": "chunk_000030",
+      "parent_chunk_id": "chunk_000030",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000030.js"
+    },
+    {
+      "id": "chunk_000031",
+      "parent_chunk_id": "chunk_000031",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000031.js"
+    },
+    {
+      "id": "chunk_000032",
+      "parent_chunk_id": "chunk_000032",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000032.js"
+    },
+    {
+      "id": "chunk_000033",
+      "parent_chunk_id": "chunk_000033",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000033.js"
+    },
+    {
+      "id": "chunk_000034",
+      "parent_chunk_id": "chunk_000034",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000034.js"
+    },
+    {
+      "id": "chunk_000035",
+      "parent_chunk_id": "chunk_000035",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000035.js"
+    },
+    {
+      "id": "chunk_000036",
+      "parent_chunk_id": "chunk_000036",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000036.js"
+    },
+    {
+      "id": "chunk_000037",
+      "parent_chunk_id": "chunk_000037",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000037.js"
+    },
+    {
+      "id": "chunk_000038",
+      "parent_chunk_id": "chunk_000038",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000038.js"
+    },
+    {
+      "id": "chunk_000039",
+      "parent_chunk_id": "chunk_000039",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000039.js"
+    },
+    {
+      "id": "chunk_000040",
+      "parent_chunk_id": "chunk_000040",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000040.js"
+    },
+    {
+      "id": "chunk_000041",
+      "parent_chunk_id": "chunk_000041",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000041.js"
+    },
+    {
+      "id": "chunk_000042",
+      "parent_chunk_id": "chunk_000042",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000042.js"
+    },
+    {
+      "id": "chunk_000043",
+      "parent_chunk_id": "chunk_000043",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000043.js"
+    },
+    {
+      "id": "chunk_000044",
+      "parent_chunk_id": "chunk_000044",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000044.js"
+    },
+    {
+      "id": "chunk_000045",
+      "parent_chunk_id": "chunk_000045",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000045.js"
+    },
+    {
+      "id": "chunk_000046",
+      "parent_chunk_id": "chunk_000046",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000046.js"
+    },
+    {
+      "id": "chunk_000047",
+      "parent_chunk_id": "chunk_000047",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000047.js"
+    },
+    {
+      "id": "chunk_000048",
+      "parent_chunk_id": "chunk_000048",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000048.js"
+    },
+    {
+      "id": "chunk_000049",
+      "parent_chunk_id": "chunk_000049",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000049.js"
+    },
+    {
+      "id": "chunk_000050.part.000",
+      "parent_chunk_id": "chunk_000050",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000050.part.000.js"
+    },
+    {
+      "id": "chunk_000050.part.001",
+      "parent_chunk_id": "chunk_000050",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000050.part.001.js"
+    },
+    {
+      "id": "chunk_000050.part.002",
+      "parent_chunk_id": "chunk_000050",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000050.part.002.js"
+    },
+    {
+      "id": "chunk_000051",
+      "parent_chunk_id": "chunk_000051",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000051.js"
+    }
+  ]
+}

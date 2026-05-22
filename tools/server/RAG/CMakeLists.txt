@@ -80,6 +80,7 @@ set(LLAMA_SERVER_RAG_CORE_SRCS
     ${LLAMA_SERVER_RAG_SRC_ROOT}/BM25Index.cpp
     ${LLAMA_SERVER_RAG_SRC_ROOT}/rag.cpp
     ${LLAMA_SERVER_RAG_SRC_ROOT}/rag_metadata.cpp
+    ${LLAMA_SERVER_RAG_SRC_ROOT}/rag_storage.cpp
     ${LLAMA_SERVER_RAG_SRC_ROOT}/rag_clips_meta.cpp
     ${LLAMA_SERVER_RAG_SRC_ROOT}/rag_clips_runner.cpp
     ${LLAMA_SERVER_RAG_SRC_ROOT}/rag_integration_bridge.cpp

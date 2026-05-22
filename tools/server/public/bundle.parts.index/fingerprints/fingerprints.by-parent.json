@@ -1,0 +1,1016 @@
+[
+  {
+    "parent_chunk_id": "chunk_000000",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000000",
+        "parent_chunk_id": "chunk_000000",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000000.js",
+        "category": "svelte-compiled",
+        "start": 0,
+        "end": 119465,
+        "size_bytes": 119466,
+        "content_sha256": "5faf35bd968aac3ab15763c3c2b92c5d50f3483f088d1bfc617a294c581c20e6",
+        "normalized_content_sha256": "3960a019bc01baed899206560608c7195cf676e1bf1e45bc3c8e0b9cb3515200",
+        "structure_sha256": "7ccb61269c73d0d4e34faaeaf6d843f31d2dac1699ec4de52b848340e0f9aaaa",
+        "record_fingerprint_sha256": "7b71bece32073f1b224a4eabb009d99fa11018fc6fa009aab999ea5750de738b"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000001",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000001",
+        "parent_chunk_id": "chunk_000001",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000001.js",
+        "category": "svelte-compiled",
+        "start": 119466,
+        "end": 239428,
+        "size_bytes": 119962,
+        "content_sha256": "0d12aa59f00ded89ab0659adba61b025612331f38957f9d86e4c19048ccbcce9",
+        "normalized_content_sha256": "0d12aa59f00ded89ab0659adba61b025612331f38957f9d86e4c19048ccbcce9",
+        "structure_sha256": "4cf8309ce734ba8cd06e373a86489608818823961d34400d3184266c7b3c0532",
+        "record_fingerprint_sha256": "9ef82288b1f50724fa9ad91e0cb7c022f50329c344b8d103935fe894415fed0c"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000002",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000002",
+        "parent_chunk_id": "chunk_000002",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000002.js",
+        "category": "svelte-compiled",
+        "start": 239428,
+        "end": 359333,
+        "size_bytes": 119905,
+        "content_sha256": "0a4eab0fe75774d2c95f97c8c2320677ff4271fb2cbeab3e47707120592718fb",
+        "normalized_content_sha256": "0a4eab0fe75774d2c95f97c8c2320677ff4271fb2cbeab3e47707120592718fb",
+        "structure_sha256": "d80629247b9f94f43435913a9d6dacd5fe8ec9fe56290928cc8b15e6eea3175f",
+        "record_fingerprint_sha256": "ac13a44dd56373dd6d17d496f5ee6a62b5775d05c12fef99f4e77f769fd4f0f8"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000003",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000003",
+        "parent_chunk_id": "chunk_000003",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000003.js",
+        "category": "svelte-compiled",
+        "start": 359333,
+        "end": 478992,
+        "size_bytes": 119659,
+        "content_sha256": "974c26ec99591f9eca9a773f7b2ba330f1add6b7e987cf1ec3e59602fc30f9b9",
+        "normalized_content_sha256": "974c26ec99591f9eca9a773f7b2ba330f1add6b7e987cf1ec3e59602fc30f9b9",
+        "structure_sha256": "16c984f5f469fd4a3d413bd760f2d5ad502e57fc76b21893209956ea76e08f72",
+        "record_fingerprint_sha256": "65227cea6f288fee003bfa9bf849e1a54c2fb049bea9aab7dc10d25ba84a4fdf"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000004",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000004",
+        "parent_chunk_id": "chunk_000004",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000004.js",
+        "category": "svelte-compiled",
+        "start": 478992,
+        "end": 598854,
+        "size_bytes": 119862,
+        "content_sha256": "d6640fac9057639cf33699b8050ebbf724d5329d49d7fbf83c1f22d527c098e2",
+        "normalized_content_sha256": "d6640fac9057639cf33699b8050ebbf724d5329d49d7fbf83c1f22d527c098e2",
+        "structure_sha256": "850b6d7b6813861c02a660fda82074c57fd39ced3a1e83b18d2ef4839e19f9a6",
+        "record_fingerprint_sha256": "00e9344931161b51fee0462755dcf36c8a80f297a929a4ab3136676c7e87a562"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000005",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000005",
+        "parent_chunk_id": "chunk_000005",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000005.js",
+        "category": "mcp",
+        "start": 598854,
+        "end": 693333,
+        "size_bytes": 94480,
+        "content_sha256": "6a6cc0281f144bfc99e746d950ffaec3691c7644200d6b86a2b66b6de0dd2098",
+        "normalized_content_sha256": "0f2f3e15548f5e16a72eb18794f08143f9d53dbf8c9e938d2e35599595e33581",
+        "structure_sha256": "189d1cd0f7e300c6cd4752f5247f774c9cc8b79abc7a4a56081ee0781dab319a",
+        "record_fingerprint_sha256": "573e69ec0ce0080417c95c6b2523187950a7dae5398f99fa60e68d09eec5b3a6"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000006",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000006",
+        "parent_chunk_id": "chunk_000006",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000006.js",
+        "category": "mcp",
+        "start": 693333,
+        "end": 783352,
+        "size_bytes": 116151,
+        "content_sha256": "40bec1df73276a67cd64948c7c16152d6e580d10fbb75fdde79a4ae0d6723faf",
+        "normalized_content_sha256": "9d1fc9b8c0086351505ae6b98b512940b90d4bd86fa298a1ff72d855c6608f92",
+        "structure_sha256": "2cf784d2f495babe10f1689884aab48f97fcf4c05b9f67a771facd7ef8e133ed",
+        "record_fingerprint_sha256": "e0ef2e604579f0be9e9786335e8f079fa8b9fa46564d7f215614be46193b887f"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000007",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000007",
+        "parent_chunk_id": "chunk_000007",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000007.js",
+        "category": "mcp",
+        "start": 783352,
+        "end": 900547,
+        "size_bytes": 117198,
+        "content_sha256": "c98a1affcc34e79d14d24d2233c9f367bc3aa31e9d2e0ddd4dedf68063b82a07",
+        "normalized_content_sha256": "a85952682a899a31f05069169c160643b4eb01f2128a80a111e46fb85826b6c0",
+        "structure_sha256": "75efb5357523d2400f49d36ad27113a379be9410de066c613b3940c4603a5946",
+        "record_fingerprint_sha256": "5937dc3904e789bee707401fd2cecfefd99d7111d070da619fe38c196c5529f6"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000008",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000008",
+        "parent_chunk_id": "chunk_000008",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000008.js",
+        "category": "mcp",
+        "start": 900547,
+        "end": 1019612,
+        "size_bytes": 119065,
+        "content_sha256": "0d7d978583c493a86a1389c3b419e849d380ae4c21eec3a296e57750124d13d9",
+        "normalized_content_sha256": "b299d79802a00a84a8893751d18f0ddd26b22fffe5e06d1a1904fff6c07aaefe",
+        "structure_sha256": "11810580329f4ab83e2416116dbdcaa6e4372f7aa9a9da5206855c8fc4c304e3",
+        "record_fingerprint_sha256": "5306018973a7c8733655f7b20aaab85718ec1c0e51d4b795455674eb42216fd0"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000009",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000009",
+        "parent_chunk_id": "chunk_000009",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000009.js",
+        "category": "highlightjs",
+        "start": 1019612,
+        "end": 1121779,
+        "size_bytes": 105045,
+        "content_sha256": "d4391cbde94ed7124ccda7be6aa0b6c92e341e64c7b046fe2c84545a97c6db3f",
+        "normalized_content_sha256": "271500f3556d27183b0f5fbea6c1b53052d4fa1937a43231d52af2bb29d14cef",
+        "structure_sha256": "86f1e6c0098cb7d2a0a9daf625e8181bd6d4c1aa572e160c5dc5594076d574d2",
+        "record_fingerprint_sha256": "9e660f1f46aa86890ce5d72bdeb793c6b1b9a119385d7d0a2cea194a07dedba0"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000010",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000010",
+        "parent_chunk_id": "chunk_000010",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000010.js",
+        "category": "highlightjs",
+        "start": 1121779,
+        "end": 1170218,
+        "size_bytes": 48439,
+        "content_sha256": "a352e22efcd5ff54247147d2c9cf72d9e949c170d1ec08576408474390c0ae1d",
+        "normalized_content_sha256": "a352e22efcd5ff54247147d2c9cf72d9e949c170d1ec08576408474390c0ae1d",
+        "structure_sha256": "12e916a508370ef9214d602ac4dbe6b930e3e91e65bf132a14136bbdef5ed088",
+        "record_fingerprint_sha256": "a02146fa1dfd69c167547efbf3884961a5414f6440f3c4ba429f5ff328c663a2"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000011",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000011",
+        "parent_chunk_id": "chunk_000011",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000011.js",
+        "category": "highlightjs",
+        "start": 1170218,
+        "end": 1295624,
+        "size_bytes": 125406,
+        "content_sha256": "d2aaccb290f05dd7952e59bfabed8a376683b5cfb743a9ef40221772c97d9168",
+        "normalized_content_sha256": "d2aaccb290f05dd7952e59bfabed8a376683b5cfb743a9ef40221772c97d9168",
+        "structure_sha256": "6660ee8517bd943859ab9fc153d35447796ee5ea639ef2a0d27d5fe3b7ad546f",
+        "record_fingerprint_sha256": "7021683de387dacd31da056660f183d9ecbf774ccf8ef1d794f3516052d08183"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000012",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000012",
+        "parent_chunk_id": "chunk_000012",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000012.js",
+        "category": "highlightjs",
+        "start": 1295624,
+        "end": 1408181,
+        "size_bytes": 112557,
+        "content_sha256": "d55d01f37094379065f430e0a240ed1d174cbd845b5579a9e36add79932c0ccb",
+        "normalized_content_sha256": "d55d01f37094379065f430e0a240ed1d174cbd845b5579a9e36add79932c0ccb",
+        "structure_sha256": "5c4809ddc47f6435abcb1c9470a432b6dc6c4bfb6a1c4f4cc0642d3359d28ca3",
+        "record_fingerprint_sha256": "8da80b9c589f1dfa30580e22d84de7cb4e933418514ef067bf5bf8b6246557c2"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000013",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000013",
+        "parent_chunk_id": "chunk_000013",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000013.js",
+        "category": "highlightjs",
+        "start": 1408181,
+        "end": 1496198,
+        "size_bytes": 88017,
+        "content_sha256": "f8b366206d675263c3b6675c9437bbbea61ed10542218f296132bf1591c57c9a",
+        "normalized_content_sha256": "964ae9d73bc71718fc459bd29c221ac065a8ac427da5d65b5fac7c28d9a56573",
+        "structure_sha256": "b16e54e13f92745af2b354b9ba475b8eb61e7d23338f902ef580b6b36f69dad7",
+        "record_fingerprint_sha256": "fc9f3ec312fb068880603ca4f903635ee189cbb472a5129519b4022e4df7d748"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000014",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000014",
+        "parent_chunk_id": "chunk_000014",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000014.js",
+        "category": "highlightjs",
+        "start": 1496198,
+        "end": 1608536,
+        "size_bytes": 112338,
+        "content_sha256": "f56e1fbade1aea937bcef60dc3b583b8aac7c4d602d93c33b5f1d58be8437c49",
+        "normalized_content_sha256": "90d866b3a32bf54088f80ca2b4affae14c54e053c8e7909aafdf67acd0294f91",
+        "structure_sha256": "278eae977ce3bc9ddc6304be0600adff75ea3b1bcaa90b39ffb53f01bb6cd471",
+        "record_fingerprint_sha256": "70ceb13dbb88656024c31765f52dbc2626e7efcf64a4a2a25a2dee595de6a87a"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000015",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000015",
+        "parent_chunk_id": "chunk_000015",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000015.js",
+        "category": "svelte-compiled",
+        "start": 1608536,
+        "end": 1717925,
+        "size_bytes": 109389,
+        "content_sha256": "e8516a74daa9a4ecf136926b045f0fff759181b2b4258b54bbe283505c55d31a",
+        "normalized_content_sha256": "495840968c0822f110b733b83b2edc045b1d7ed755d83a916b49ee5d844153b1",
+        "structure_sha256": "54b032fa7f2673d6c59812bc39e9b1c7d9dd8e88c313b6519ef25c68f716cf35",
+        "record_fingerprint_sha256": "5b01fc93f107d81bd1cb27a47b99062a439b25531f954b112210558cf2cb0c66"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000016",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000016",
+        "parent_chunk_id": "chunk_000016",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000016.js",
+        "category": "mcp",
+        "start": 1717925,
+        "end": 1757215,
+        "size_bytes": 39290,
+        "content_sha256": "8c41d1e298c049aa4f4c41ef050fdc05bb2bc2482303ace3cf887da47f3c3b58",
+        "normalized_content_sha256": "cfc8c3e0b7de58b8a002326cf2ff2cc96f0786ac4d0a76c94104943072e90a38",
+        "structure_sha256": "a6e3b4ec10c91ae0ee6474c24b886a7399f90e2b61c33351456cbd4fc72f0f45",
+        "record_fingerprint_sha256": "dcdb312f4e80f081d544635e21b3035e95b4e54cd2a1ef391257b0cc1a7359e5"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000017",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000017",
+        "parent_chunk_id": "chunk_000017",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000017.js",
+        "category": "mcp",
+        "start": 1757215,
+        "end": 1876407,
+        "size_bytes": 119194,
+        "content_sha256": "a382790460a9ac80d81ba762be199e16687b129b88cd1275874316dedbac2f38",
+        "normalized_content_sha256": "a382790460a9ac80d81ba762be199e16687b129b88cd1275874316dedbac2f38",
+        "structure_sha256": "ee3bd5caa7d32d8a0446b051deb7d824aefb481fa271e81abfe0c7d13ae71071",
+        "record_fingerprint_sha256": "a1843603016615cfb5822d98f9a748cec40ddb5fadc2297f12a43273fa32029a"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000018",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000018",
+        "parent_chunk_id": "chunk_000018",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000018.js",
+        "category": "mcp",
+        "start": 1876407,
+        "end": 1994914,
+        "size_bytes": 118507,
+        "content_sha256": "3329f4a66b1bbd6d702a2bccdedcfe2016a45a0c0a12e4afc48694111f750736",
+        "normalized_content_sha256": "7e653159ee9af06721d8b3b7399b49e42a62d55092abffec1ce5461dc3ecf9c5",
+        "structure_sha256": "a23650bb3995b8f34f2a9ad2910bc300e0587e02bc5eb2ed6db42378ba3249b4",
+        "record_fingerprint_sha256": "1a8058becd9bc3d3ac4c58f842ba16c52399fa5ee8bbfe4a5e697d0c86747926"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000019",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000019",
+        "parent_chunk_id": "chunk_000019",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000019.js",
+        "category": "zod",
+        "start": 1994914,
+        "end": 2103045,
+        "size_bytes": 108131,
+        "content_sha256": "8f87f7ed553cb3fdec5a608556399ae768f392c5ff94f26e861ce9d1b29a8289",
+        "normalized_content_sha256": "c74a07e1d98ea4721adbfca916d7954da5a035515c29c06e720c537233b8b0a8",
+        "structure_sha256": "469d767e238ddbde342d3b51a9d1259a44d9948bc010df3770a44cd2dde73ab6",
+        "record_fingerprint_sha256": "8c29ae433077b3579fd11843c67dab7fe150df2ed21fde481215c145f2c5134f"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000020",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000020",
+        "parent_chunk_id": "chunk_000020",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000020.js",
+        "category": "generic-js",
+        "start": 2103045,
+        "end": 2220962,
+        "size_bytes": 117917,
+        "content_sha256": "ba16b8c72e32eaec5d165d56ececbf0cac8c629a507d88312becd8bec4acbd99",
+        "normalized_content_sha256": "2d0d56b58cab2421cccc796b326cf0faf1aa0cccf69892551a678e0310060cb8",
+        "structure_sha256": "9a468d8532178862c804655448531ba3bdf42402659909e2f3a0accba6ad520e",
+        "record_fingerprint_sha256": "174fbd5a9e60753d54a36dba0c8fa50f5dda57a75543d8fbd9cad56570d1a747"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000021",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000021",
+        "parent_chunk_id": "chunk_000021",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000021.js",
+        "category": "generic-js",
+        "start": 2220962,
+        "end": 2339498,
+        "size_bytes": 118536,
+        "content_sha256": "8939303b5486824fac21d0ff6dbcda4da26484ad53502cbad31cc0880f84e7a6",
+        "normalized_content_sha256": "9c33f05de6d9c69ddc868aef2738c7cf281ab0eaeafa4fc6b12589b5ed02935e",
+        "structure_sha256": "fa9c23f4c1b92134e04ffbf2a43f08298d43c33891acb190d11ffa6de3937bc5",
+        "record_fingerprint_sha256": "b57ef5bbd6e4a54e214689a14a637295caa8a3e7b9aa849cc650d8faa568d22c"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000022",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000022",
+        "parent_chunk_id": "chunk_000022",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000022.js",
+        "category": "mcp",
+        "start": 2339498,
+        "end": 2449642,
+        "size_bytes": 110146,
+        "content_sha256": "dcdd39fa58a25aefb3b3555f405f4480cac79c34917a468bc30867defdec3d91",
+        "normalized_content_sha256": "661d2c1d19c7f58f82521621739408647c92ed7446a3d54a15590fea5eb6854f",
+        "structure_sha256": "e55667b753c9acf35a23e0c928d9cc9651fec4f861ad2bb473aefc501ab4be75",
+        "record_fingerprint_sha256": "01025619ba8415e3f688cf5cf7e1ab95e41a243ad45c6489f1586bcccbef5d3c"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000023",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000023",
+        "parent_chunk_id": "chunk_000023",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000023.js",
+        "category": "mcp",
+        "start": 2449642,
+        "end": 2568653,
+        "size_bytes": 119014,
+        "content_sha256": "68a930b94c62ef385411d7104a310de0219d3abccf0135adcd71a647d05cde3f",
+        "normalized_content_sha256": "8dcc81967c56642c845cfefd1186a03c1b57a585a8a1bdfc4872f154655079f8",
+        "structure_sha256": "ab9a2f58b07b40f112202ab13647d5773dcf587e23b7cf7c2f9791ad886cd33a",
+        "record_fingerprint_sha256": "61a1ced48b4e39d9af7a51cbdc84831307f61318dd846ac79baf2714a5a9638b"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000024",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000024",
+        "parent_chunk_id": "chunk_000024",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000024.js",
+        "category": "highlightjs",
+        "start": 2568653,
+        "end": 2688551,
+        "size_bytes": 119898,
+        "content_sha256": "43a47da48fee06e4f870dbdfa9d55dd533e8b0e21645772d2ab059aa06c33141",
+        "normalized_content_sha256": "43a47da48fee06e4f870dbdfa9d55dd533e8b0e21645772d2ab059aa06c33141",
+        "structure_sha256": "3e0ec6864e12137405e4627a0548908a3f745ccf88f477862ddd244dbbd98f90",
+        "record_fingerprint_sha256": "1592a618e2950e942af64a66b9beff2162263e9863c4cfda4e48c7b5bbba60a6"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000025",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000025",
+        "parent_chunk_id": "chunk_000025",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000025.js",
+        "category": "pdfjs",
+        "start": 2688551,
+        "end": 2807959,
+        "size_bytes": 119408,
+        "content_sha256": "a60f7bc84df2d72266306e2ccc9fbdce88e9d2c699b4652b7deebb27f9b8323a",
+        "normalized_content_sha256": "a60f7bc84df2d72266306e2ccc9fbdce88e9d2c699b4652b7deebb27f9b8323a",
+        "structure_sha256": "a8fd1ba807ca95c0501413f5b9e6588996bfd824e8c54dfb8ee6b8130d5c9587",
+        "record_fingerprint_sha256": "445226a2b6453f2ca6f1049fc1aa73ee6a354c1b092900350270edc4b2daca0f"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000026",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000026",
+        "parent_chunk_id": "chunk_000026",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000026.js",
+        "category": "pdfjs",
+        "start": 2807959,
+        "end": 2927283,
+        "size_bytes": 119326,
+        "content_sha256": "413f1cc800cdc270c2d8d68f49feb411584024832bedd1fd59ef9b8fefbe0ac3",
+        "normalized_content_sha256": "413f1cc800cdc270c2d8d68f49feb411584024832bedd1fd59ef9b8fefbe0ac3",
+        "structure_sha256": "407606b88bd0f27275ae692ea30a0947d4fcf65a85353fa94c0482cf6e804a3c",
+        "record_fingerprint_sha256": "249b082e415f48f7e76aa675b69d280e4e0db0c0836138ab72cfb9b56e35bcc2"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000027",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000027",
+        "parent_chunk_id": "chunk_000027",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000027.js",
+        "category": "highlightjs",
+        "start": 2927283,
+        "end": 3044562,
+        "size_bytes": 117279,
+        "content_sha256": "0ad7b38a189de4791aa6620d02da3b9a4666c1e206b9d2aac558ddc6868d7041",
+        "normalized_content_sha256": "0ad7b38a189de4791aa6620d02da3b9a4666c1e206b9d2aac558ddc6868d7041",
+        "structure_sha256": "afa811c890e66d70f09129b14e5afbd031f08d70be04ea36433d76983bd8ce16",
+        "record_fingerprint_sha256": "62251b8a2c3bf25137ef9d093ae755d181c78cf08bcc0b6426e76811f31626a8"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000028",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000028",
+        "parent_chunk_id": "chunk_000028",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000028.js",
+        "category": "mcp",
+        "start": 3044562,
+        "end": 3155698,
+        "size_bytes": 111136,
+        "content_sha256": "25d3fea081d1815c95a84ac85402ad300d0bdac64fcb99e15802237400b80b2b",
+        "normalized_content_sha256": "72d7e9543602fa5388e8276075d4f44fecb222aad163caed90077231459ac719",
+        "structure_sha256": "f9354c2113e8e68413f2c7a9624439c1d80f57b45ef3aba14b72e51da550711b",
+        "record_fingerprint_sha256": "c33e900786cb2333732449f86301871f2be34ee586f3edde2a19c265c098f1d2"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000029",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000029",
+        "parent_chunk_id": "chunk_000029",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000029.js",
+        "category": "mcp",
+        "start": 3155698,
+        "end": 3229839,
+        "size_bytes": 74202,
+        "content_sha256": "541ea03eb536e2ea53bfa4d3d7100e0b4d3cb3c764438471ebd31a2caf11417d",
+        "normalized_content_sha256": "541ea03eb536e2ea53bfa4d3d7100e0b4d3cb3c764438471ebd31a2caf11417d",
+        "structure_sha256": "d95b09774c39a97031a0c4a6cb2f60b0d8b63409e0761f54c90c8f51f9152ea1",
+        "record_fingerprint_sha256": "147440725df3214e8487d034a535846757fd189bfb6b1d195894e586f3530b03"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000030",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000030",
+        "parent_chunk_id": "chunk_000030",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000030.js",
+        "category": "mcp",
+        "start": 3229839,
+        "end": 3349811,
+        "size_bytes": 119972,
+        "content_sha256": "d7c3dd833f07799cae67df95958e42181823e591ceaf7ee5ef654afe075ed949",
+        "normalized_content_sha256": "91075ca7773f6782e62ccd607108fbdad4cce8e0bfb8a336e16f20ad0131940f",
+        "structure_sha256": "4c5fcd9aa6469e06351a274fbcabc514bbb33086c26b9cfded5100783f160b17",
+        "record_fingerprint_sha256": "d5629c043a4aa4949bfc1103834c255f1bf05a26503ddf07daae92fb510a33cd"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000031",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000031",
+        "parent_chunk_id": "chunk_000031",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000031.js",
+        "category": "mcp",
+        "start": 3349811,
+        "end": 3469756,
+        "size_bytes": 119949,
+        "content_sha256": "984ba439a1b1a16fc78cc78eb74a015e2812eecf413c79ffe54961950badfb18",
+        "normalized_content_sha256": "82e9482966da955c394178cfe44d9d31e9d8387004d09cfdb3fbb952cc58c1b5",
+        "structure_sha256": "d0e794f0edec4432a2390677870a950e3f9db5408e7d16b5aadeb33262f5363f",
+        "record_fingerprint_sha256": "f2cff3a0ea91d6c7d23fdeaefc23631598853133e980542a2b1b79676609e1eb"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000032",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000032",
+        "parent_chunk_id": "chunk_000032",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000032.js",
+        "category": "chat-ui",
+        "start": 3469756,
+        "end": 3582288,
+        "size_bytes": 112536,
+        "content_sha256": "edf82254b84a0a6b05bef844019d9edb33259d6105362980dbe26fee65f46ae2",
+        "normalized_content_sha256": "9a38e47801fad9f34323ef7a197c0e5eca7ae1a5a91ba2c23025ec870913bbbd",
+        "structure_sha256": "48c6c5de110227bbab52dbea52984f127ad99b6d6da93c58d06d837db2d6c6ae",
+        "record_fingerprint_sha256": "f8d53c339c65a5f76383fce22ba678f1552d6ecedfc4a35542dccdd3f355bfa2"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000033",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000033",
+        "parent_chunk_id": "chunk_000033",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000033.js",
+        "category": "svelte-compiled",
+        "start": 3582288,
+        "end": 3698867,
+        "size_bytes": 116587,
+        "content_sha256": "78e6a02da46a5b47f3d42f2c22102c8ee312f65e268e994ad4a7ae28e5bede23",
+        "normalized_content_sha256": "4d0df2b2d3a8ba5259cf06cada2432ec4421acd48ad0c4c5428982a56204befb",
+        "structure_sha256": "5e0423a26adbc23ad4e8ba5d078417c4f4c43ef7e478f3816643c3468f0e91db",
+        "record_fingerprint_sha256": "a2a11c55ce8b066fb7bb498e260db6360f69f1b4db54c01c1139f31bb462ea76"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000034",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000034",
+        "parent_chunk_id": "chunk_000034",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000034.js",
+        "category": "generic-js",
+        "start": 3698867,
+        "end": 3816444,
+        "size_bytes": 117579,
+        "content_sha256": "2cce1603828504b58a789dae00da1d005ce3bbae34b836fca6822ad23d64c80f",
+        "normalized_content_sha256": "20eb58d685842e801c9e483ec5f1d5c13d4cd187872547a079ebb8501e278870",
+        "structure_sha256": "f54a82a0d565b8529c3333cd507fa432e91e2b3fc57671099f1002fedd2b33ab",
+        "record_fingerprint_sha256": "8536510ec39b842d183d60c80009aa77f84963f68f4f6a5b6c73075688428970"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000035",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000035",
+        "parent_chunk_id": "chunk_000035",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000035.js",
+        "category": "katex",
+        "start": 3816444,
+        "end": 3936228,
+        "size_bytes": 119893,
+        "content_sha256": "4804db439d9fc6836229e02a4e9d1a688a3b13e6c9f2638858572716ada999e7",
+        "normalized_content_sha256": "4804db439d9fc6836229e02a4e9d1a688a3b13e6c9f2638858572716ada999e7",
+        "structure_sha256": "f0b1aac36cd742716d03d3068971d61c9c778bfb8e514daf77893ad9b25519c6",
+        "record_fingerprint_sha256": "937de88440b99a4262170d3bd735ce73a33d810298f8085f9c19b6f58dd9489b"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000036",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000036",
+        "parent_chunk_id": "chunk_000036",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000036.js",
+        "category": "katex",
+        "start": 3936228,
+        "end": 4053896,
+        "size_bytes": 118939,
+        "content_sha256": "8569809bd301c5d230ef72a007be832e11b5047e70460bb4850c9bc8d24e7eda",
+        "normalized_content_sha256": "363d326276a8af1755942faae5112d22d46bed0c1fa6dc1422739af04f1c12bd",
+        "structure_sha256": "836b272012d0e907afedde360bf7d66e29c6ca15eca4841796aade8a33eb0f2a",
+        "record_fingerprint_sha256": "45ea971af5e3477d651675c1a4b90866fbe062ba48f5d60dedf699ce46aa9c72"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000037",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000037",
+        "parent_chunk_id": "chunk_000037",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000037.js",
+        "category": "katex",
+        "start": 4053896,
+        "end": 4172139,
+        "size_bytes": 119699,
+        "content_sha256": "e3da7847fa5ac645c1ef483255a3ac7fc2291f90766fefacd16eb01f20518701",
+        "normalized_content_sha256": "d6e59815a0a6ad572bb0f19a3541eaf991fa4780748618222991ca9d221908b7",
+        "structure_sha256": "7c964479c099d03790e5536b369ee916bfa387daf391b684353675d0ed2ff4b4",
+        "record_fingerprint_sha256": "efd228e1c8f6f538a842da328d9b82eeeacf891ecc5dcdd23e5cd2997f616afd"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000038",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000038",
+        "parent_chunk_id": "chunk_000038",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000038.js",
+        "category": "katex",
+        "start": 4172139,
+        "end": 4264821,
+        "size_bytes": 118816,
+        "content_sha256": "f757f6aa69fdc2cb975203609d2d41402727b3c9d98931086c2071d8f9cb5578",
+        "normalized_content_sha256": "017bd5fc606c6ade78014102e7953d847c29483e4e90b00eebc7e74fe7ec1bf8",
+        "structure_sha256": "9224d373a412455492331704e23be548a8fb8617fc99b8ce2470a8dc06230f66",
+        "record_fingerprint_sha256": "031681e1d933c9a8904dff1f0ab3952fe6f66650de9ad67657f3d4875d75ffc2"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000039",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000039",
+        "parent_chunk_id": "chunk_000039",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000039.js",
+        "category": "highlightjs",
+        "start": 4264821,
+        "end": 4347990,
+        "size_bytes": 83170,
+        "content_sha256": "ec96ed43dec9d7032bbd51998799324f38888a5a3787b9f3d73c0c5e9d9b0d25",
+        "normalized_content_sha256": "ec96ed43dec9d7032bbd51998799324f38888a5a3787b9f3d73c0c5e9d9b0d25",
+        "structure_sha256": "781ac04dc9693f83b2c7b7bfe456bea011ac740d062226231134101aa0908ac0",
+        "record_fingerprint_sha256": "def10cd2518b58aee60368e4045fef7896755f8bd715993a0b04019cdc2046f4"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000040",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000040",
+        "parent_chunk_id": "chunk_000040",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000040.js",
+        "category": "mcp",
+        "start": 4347990,
+        "end": 4436530,
+        "size_bytes": 88540,
+        "content_sha256": "c2d55cce0d5a0fa26257012a4607aa2767b335031069943a9a533dc5c32c4836",
+        "normalized_content_sha256": "5f024ab86437a505a9c45b28aeb7db02a96af76040ac32a6098f3cf6b6730859",
+        "structure_sha256": "8134af6046fb6095238565d12f21e19edd2ab4a124c11171fe078f2110d1a8c0",
+        "record_fingerprint_sha256": "bdfde4992892f461dca02b77a1651b5a724bbf983f8998e5a7450d457e5c64f0"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000041",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000041",
+        "parent_chunk_id": "chunk_000041",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000041.js",
+        "category": "highlightjs",
+        "start": 4436530,
+        "end": 4549845,
+        "size_bytes": 116189,
+        "content_sha256": "19b62013d018f95e0a8b6f8e8a5abbb8189cfd537ef3f138f14b0d5a6af56640",
+        "normalized_content_sha256": "a63dc81ce82e147ec41e53a71e6ccc6fb80c1592451f39e8000084eb2998387c",
+        "structure_sha256": "48ced5a2d3ffcfa873d86e40b72bc36e9498f556881ee870b880da08db499020",
+        "record_fingerprint_sha256": "8adb6fa8d04002432b39783423792a98d067973d8705186cb11e651683e941af"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000042",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000042",
+        "parent_chunk_id": "chunk_000042",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000042.js",
+        "category": "generic-js",
+        "start": 4549845,
+        "end": 4673380,
+        "size_bytes": 123535,
+        "content_sha256": "85726ff268c85da9769d4ce8933d3f9e18f215dba9db7f9c0d8882a5c4940fa5",
+        "normalized_content_sha256": "85726ff268c85da9769d4ce8933d3f9e18f215dba9db7f9c0d8882a5c4940fa5",
+        "structure_sha256": "a104f0b9b2e62334d4bb619777a504f0b933ba5e9fba4a1e37723eff9ab684ba",
+        "record_fingerprint_sha256": "edaa27bc58dfd57b0a51a84f7a72ee35ec6e46757a6f296152a7c6a7b27083e6"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000043",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000043",
+        "parent_chunk_id": "chunk_000043",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000043.js",
+        "category": "highlightjs",
+        "start": 4673380,
+        "end": 4793255,
+        "size_bytes": 119875,
+        "content_sha256": "1d50c9cbb12a532a66ff6640d8179ea5c4f24c270d00462d9b1ae7c30d735d41",
+        "normalized_content_sha256": "1d50c9cbb12a532a66ff6640d8179ea5c4f24c270d00462d9b1ae7c30d735d41",
+        "structure_sha256": "466c4fdd4723eeccc861d62fbe57e4ba00e1cd772550459d762e1b7998ac8db2",
+        "record_fingerprint_sha256": "136408243a6f3444c49b7a3a746bc6dd73f58e87b58226a3d38fb574775ad202"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000044",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000044",
+        "parent_chunk_id": "chunk_000044",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000044.js",
+        "category": "highlightjs",
+        "start": 4793255,
+        "end": 4911807,
+        "size_bytes": 118552,
+        "content_sha256": "7d7ed1f022a32c30e3e6ec293d8309b22332d4a6120757530cadbc52550c9f17",
+        "normalized_content_sha256": "3884af24704ebcd5a5b7af8a3e1e55cfe352b06c668438424b3abec094509475",
+        "structure_sha256": "d3add5875c5f0101d0852780ad80bffee1aa20de7b3de28ae9792ed2a7ac8822",
+        "record_fingerprint_sha256": "e5d78eae129591a0bc74869cdef77404340e43d811257153c474609e2070952a"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000045",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000045",
+        "parent_chunk_id": "chunk_000045",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000045.js",
+        "category": "mcp",
+        "start": 4911807,
+        "end": 5030791,
+        "size_bytes": 118988,
+        "content_sha256": "13399c25bed6918c02c5564c36fac06076c00b1b7a6009e7e7888402f9ae1c84",
+        "normalized_content_sha256": "14db8dee9ce1d66796dc445adfcdd20e99f240d57c1acb09dc1ce2f05332160d",
+        "structure_sha256": "07474bdcc7b22b97fb4cb3776e5ce051dcb5d6f6e718ebb86dd23305dbd24055",
+        "record_fingerprint_sha256": "9a5e4cb9a1acb1257172aa15071f93bb868d75787f14c8b952e34b27f5e06404"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000046",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000046",
+        "parent_chunk_id": "chunk_000046",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000046.js",
+        "category": "highlightjs",
+        "start": 5030791,
+        "end": 5150715,
+        "size_bytes": 119926,
+        "content_sha256": "7ba50dd675e3465ab6511f12eb117d8e1207cf09375f741420f635464b7e6796",
+        "normalized_content_sha256": "7f0c00d21cc233d2aeecb1cd4cb1d6246ffabfb7bdfd48d6d0b4ebf6c75d63c6",
+        "structure_sha256": "4de253f1b80dfddf377e588a61686f34e86eef81566529eba1abd0597ad2bbc9",
+        "record_fingerprint_sha256": "26a8dd11c7c5a645e2e9fbde88e8e3cb598e5860cd28db2a890b27facc5a5771"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000047",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000047",
+        "parent_chunk_id": "chunk_000047",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000047.js",
+        "category": "mcp",
+        "start": 5150715,
+        "end": 5270128,
+        "size_bytes": 119756,
+        "content_sha256": "1de388ee15def13a46255829a6b6023bb3fd33a155295674323170d5d4ee1c64",
+        "normalized_content_sha256": "54df7c7f0832e0c151282cfb4887c855d165d04c464e37a57651f6656a5cb61a",
+        "structure_sha256": "6a245eba1e742d9019ad38f67f0f5f3972f9d56001f4f9170bc9d17c7563009e",
+        "record_fingerprint_sha256": "0c54cb7ec4daaed1a11855f598d2d818363ea6fafa7e8e4966c9f0c49ffddf93"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000048",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000048",
+        "parent_chunk_id": "chunk_000048",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000048.js",
+        "category": "mcp",
+        "start": 5270128,
+        "end": 5388458,
+        "size_bytes": 118337,
+        "content_sha256": "f78da3dcc0e28dc1db5c07ae0b7872ad9982126a990a1330ddf34d02bba6e920",
+        "normalized_content_sha256": "f0c44c493df2114ad82b59723bd4217dde4d13ebdccb5eac07fc5078416a6bce",
+        "structure_sha256": "091e69f08ea21639b26abf4efd0f2d08924dbc13614a54ae30920ec6057cfaeb",
+        "record_fingerprint_sha256": "d243912403ccb6d9655af8a7b840d913749b15275b550fbffc5fb025cac35dfa"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000049",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000049",
+        "parent_chunk_id": "chunk_000049",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000049.js",
+        "category": "mcp",
+        "start": 5388458,
+        "end": 5414045,
+        "size_bytes": 25587,
+        "content_sha256": "9e27d668b9557ccd23e95981569ea1f78c9b49c466dfdd4c2d6ca4565f8b0805",
+        "normalized_content_sha256": "9e27d668b9557ccd23e95981569ea1f78c9b49c466dfdd4c2d6ca4565f8b0805",
+        "structure_sha256": "b6129e6c884916c07d44e43f7070cf02595379d9d79d07b89a180bfca04c3f36",
+        "record_fingerprint_sha256": "a80e82a52720391fc442bc99296beddc88e664f87189149acfd5ab752fbd6f06"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000050",
+    "count": 3,
+    "records": [
+      {
+        "id": "chunk_000050.part.000",
+        "parent_chunk_id": "chunk_000050",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000050.part.000.js",
+        "category": "highlightjs",
+        "start": 5414045,
+        "end": 5414176,
+        "size_bytes": 131,
+        "content_sha256": "78e91de043419293185b93dfbfb7483b9f88c813dfd7cdd90201c6555613a2a0",
+        "normalized_content_sha256": "78e91de043419293185b93dfbfb7483b9f88c813dfd7cdd90201c6555613a2a0",
+        "structure_sha256": "5c70982f64ffeae0d25d2e0ae2aab8e692b43bcc21e46cbc67fa9e30d1e8a1f3",
+        "record_fingerprint_sha256": "0b9cb6480a6522675676ac787ead830eb9ce4d1604413a20d7c1d64b55975406"
+      },
+      {
+        "id": "chunk_000050.part.001",
+        "parent_chunk_id": "chunk_000050",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000050.part.001.js",
+        "category": "highlightjs",
+        "start": 5414176,
+        "end": 6456101,
+        "size_bytes": 1041956,
+        "content_sha256": "36bc32445fc00f4fa475f0199ad4d1f55b5a73baad6e0da0f6dbb45c29443fd0",
+        "normalized_content_sha256": "de05d33cfe83e31a82f0ae88aed88dbe47e1156c0a8795927787f53eb51b2fa0",
+        "structure_sha256": "7e7ba990b01798804c7334af2e80db22ca2b2c3ccc4dee72e8bab07843e7e5a5",
+        "record_fingerprint_sha256": "9eb16e101ee6cb2db819fc9932b32fe77edc60ed058ed96c46e4718039911a42"
+      },
+      {
+        "id": "chunk_000050.part.002",
+        "parent_chunk_id": "chunk_000050",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000050.part.002.js",
+        "category": "highlightjs",
+        "start": 6456101,
+        "end": 6456208,
+        "size_bytes": 107,
+        "content_sha256": "6520ce89ca59eaa5e2c082dc606ec7c413134fcd70e4b99ee5ec499a87ab6c97",
+        "normalized_content_sha256": "6520ce89ca59eaa5e2c082dc606ec7c413134fcd70e4b99ee5ec499a87ab6c97",
+        "structure_sha256": "3ad5f6225cb3360e1984d38baae3d80bd44a01554284fc3f90d3ee792924de84",
+        "record_fingerprint_sha256": "fa3c1d7ed3a23703cd95c4eaf0b4a52b1dae3e15300d1abbdfd52855b3ed144d"
+      }
+    ]
+  },
+  {
+    "parent_chunk_id": "chunk_000051",
+    "count": 1,
+    "records": [
+      {
+        "id": "chunk_000051",
+        "parent_chunk_id": "chunk_000051",
+        "file": "bundle.parts.index\\refined-chunks\\chunk_000051.js",
+        "category": "generic-js",
+        "start": 6456208,
+        "end": 6456226,
+        "size_bytes": 18,
+        "content_sha256": "47000afe80792fbb837cf3024a356db4cc413e3dbb3fab9ea7d33c353190da72",
+        "normalized_content_sha256": "47000afe80792fbb837cf3024a356db4cc413e3dbb3fab9ea7d33c353190da72",
+        "structure_sha256": "d04c0b124a4b61476e3955750cb052d124b16397db7fc921c63543c89df08f3a",
+        "record_fingerprint_sha256": "16b4ad30da18dd4880cc364b848a6fa3219a0632db0514df0f17efc8a8d7baae"
+      }
+    ]
+  }
+]

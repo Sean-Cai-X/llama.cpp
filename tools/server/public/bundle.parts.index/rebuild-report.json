@@ -1,0 +1,85 @@
+{
+  "source": "bundle.original.js",
+  "record_model": "bundle_parts_v1",
+  "declared_part_count": 14,
+  "actual_part_count": 14,
+  "target_part_size_bytes": 480000,
+  "max_part_size_bytes": 500000,
+  "largest_part_size_bytes": 504156,
+  "rebuilt_file": "bundle.parts.index\\rebuilt.bundle.js",
+  "rebuilt_size_bytes": 6517562,
+  "rebuilt_sha256": "1597c698184b42a1ef77441392c90b0a5febb2af023e8bd9b429f503337c118b",
+  "part_count_match": true,
+  "parts": [
+    {
+      "file": "bundle.part.000.js",
+      "size_bytes": 499497,
+      "sha256": "8e38d8197d082c87bd592401b08f4faf468ae6dcc04c57cc81de32e4a1f66900"
+    },
+    {
+      "file": "bundle.part.001.js",
+      "size_bytes": 499983,
+      "sha256": "6f36bb35c60ad9fcb32ec54e2e0da9a6d611356220d06b59903e83fd92a5fe12"
+    },
+    {
+      "file": "bundle.part.002.js",
+      "size_bytes": 499535,
+      "sha256": "dfd2c4ce0386f7601ff61ee6a661d0d897276bb727317ae234a7e837619d30e4"
+    },
+    {
+      "file": "bundle.part.003.js",
+      "size_bytes": 499691,
+      "sha256": "944b45fc4d5c576cb3c2a0150ce673b020f6ab9eeb6d75291511cbbcdd59acb4"
+    },
+    {
+      "file": "bundle.part.004.js",
+      "size_bytes": 499620,
+      "sha256": "cb5ccc60aead87329f1c12a72675f194d4052a41f4558ccbbc5937a8285b7874"
+    },
+    {
+      "file": "bundle.part.005.js",
+      "size_bytes": 499714,
+      "sha256": "c2b95f99c5f9b83c38be3611b2beb95b5a296d43bd1ff8c88e81e17aa6c84dbe"
+    },
+    {
+      "file": "bundle.part.006.js",
+      "size_bytes": 504156,
+      "sha256": "ed601116e100070259f2088912defb5c3089d9411dc5f19ef5a9e5de0d336463"
+    },
+    {
+      "file": "bundle.part.007.js",
+      "size_bytes": 499671,
+      "sha256": "9c24b08fa8fe7bc44f43cc05e85bc07c8c1710c8c6c6383ef43f84d4c8ab8055"
+    },
+    {
+      "file": "bundle.part.008.js",
+      "size_bytes": 499756,
+      "sha256": "72e6a113ef39fbe9ce13e2fc2cbc5dd75622e408f3bad2d6676c9942be78bce2"
+    },
+    {
+      "file": "bundle.part.009.js",
+      "size_bytes": 499957,
+      "sha256": "e6398323d8b635ddc184f0757b63bdb3ea397e7efde811d96fad1de9bff24d08"
+    },
+    {
+      "file": "bundle.part.010.js",
+      "size_bytes": 499771,
+      "sha256": "85a9475fcfc1ab92d98ff1506dde3015dbbbc802b3b1346861f70ec443d9e4c2"
+    },
+    {
+      "file": "bundle.part.011.js",
+      "size_bytes": 499726,
+      "sha256": "38382eb33bb0f7fec65106aa62afd34cde018bbe10f5ca9f1689c64c932d57f0"
+    },
+    {
+      "file": "bundle.part.012.js",
+      "size_bytes": 499774,
+      "sha256": "fe90ff618565ac112ded67ab1870055d91fa2fbd3ad840af5089c2f42e40a688"
+    },
+    {
+      "file": "bundle.part.013.js",
+      "size_bytes": 16711,
+      "sha256": "93662c99da86d534215f42b0294fd59aefb3cc3874c1d59264d0e77f0b8bae53"
+    }
+  ]
+}

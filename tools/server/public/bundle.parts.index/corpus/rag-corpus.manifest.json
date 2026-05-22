@@ -1,0 +1,347 @@
+{
+  "record_count": 54,
+  "output_file": "bundle.parts.index\\corpus\\rag-corpus.jsonl",
+  "lookup_summary_file": "bundle.parts.index\\lookup\\lookup-summary.json",
+  "category_counts": {
+    "svelte-compiled": 7,
+    "mcp": 18,
+    "highlightjs": 16,
+    "zod": 1,
+    "generic-js": 5,
+    "pdfjs": 2,
+    "chat-ui": 1,
+    "katex": 4
+  },
+  "tag_counts": {
+    "svelte-compiled": 19,
+    "highlightjs": 33,
+    "chat-ui": 10,
+    "mcp": 18,
+    "pdfjs": 16,
+    "zod": 3,
+    "katex": 5
+  },
+  "largest_records": [
+    {
+      "id": "chunk_000050.part.001",
+      "parent_chunk_id": "chunk_000050",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000050.part.001.js",
+      "size_bytes": 1041956,
+      "category": "highlightjs",
+      "tags": [
+        "highlightjs",
+        "pdfjs"
+      ]
+    },
+    {
+      "id": "chunk_000011",
+      "parent_chunk_id": "chunk_000011",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000011.js",
+      "size_bytes": 125406,
+      "category": "highlightjs",
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "chunk_000042",
+      "parent_chunk_id": "chunk_000042",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000042.js",
+      "size_bytes": 123535,
+      "category": "generic-js",
+      "tags": []
+    },
+    {
+      "id": "chunk_000030",
+      "parent_chunk_id": "chunk_000030",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000030.js",
+      "size_bytes": 119972,
+      "category": "mcp",
+      "tags": [
+        "chat-ui",
+        "mcp",
+        "svelte-compiled",
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "chunk_000001",
+      "parent_chunk_id": "chunk_000001",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000001.js",
+      "size_bytes": 119962,
+      "category": "svelte-compiled",
+      "tags": [
+        "svelte-compiled"
+      ]
+    },
+    {
+      "id": "chunk_000031",
+      "parent_chunk_id": "chunk_000031",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000031.js",
+      "size_bytes": 119949,
+      "category": "mcp",
+      "tags": [
+        "svelte-compiled",
+        "mcp",
+        "chat-ui",
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "chunk_000046",
+      "parent_chunk_id": "chunk_000046",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000046.js",
+      "size_bytes": 119926,
+      "category": "highlightjs",
+      "tags": [
+        "highlightjs",
+        "pdfjs"
+      ]
+    },
+    {
+      "id": "chunk_000002",
+      "parent_chunk_id": "chunk_000002",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000002.js",
+      "size_bytes": 119905,
+      "category": "svelte-compiled",
+      "tags": [
+        "svelte-compiled",
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "chunk_000024",
+      "parent_chunk_id": "chunk_000024",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000024.js",
+      "size_bytes": 119898,
+      "category": "highlightjs",
+      "tags": [
+        "highlightjs",
+        "pdfjs"
+      ]
+    },
+    {
+      "id": "chunk_000035",
+      "parent_chunk_id": "chunk_000035",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000035.js",
+      "size_bytes": 119893,
+      "category": "katex",
+      "tags": [
+        "katex"
+      ]
+    },
+    {
+      "id": "chunk_000043",
+      "parent_chunk_id": "chunk_000043",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000043.js",
+      "size_bytes": 119875,
+      "category": "highlightjs",
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "chunk_000004",
+      "parent_chunk_id": "chunk_000004",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000004.js",
+      "size_bytes": 119862,
+      "category": "svelte-compiled",
+      "tags": [
+        "svelte-compiled"
+      ]
+    },
+    {
+      "id": "chunk_000047",
+      "parent_chunk_id": "chunk_000047",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000047.js",
+      "size_bytes": 119756,
+      "category": "mcp",
+      "tags": [
+        "katex",
+        "highlightjs",
+        "svelte-compiled",
+        "mcp"
+      ]
+    },
+    {
+      "id": "chunk_000037",
+      "parent_chunk_id": "chunk_000037",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000037.js",
+      "size_bytes": 119699,
+      "category": "katex",
+      "tags": [
+        "katex"
+      ]
+    },
+    {
+      "id": "chunk_000003",
+      "parent_chunk_id": "chunk_000003",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000003.js",
+      "size_bytes": 119659,
+      "category": "svelte-compiled",
+      "tags": [
+        "svelte-compiled",
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "chunk_000000",
+      "parent_chunk_id": "chunk_000000",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000000.js",
+      "size_bytes": 119466,
+      "category": "svelte-compiled",
+      "tags": [
+        "svelte-compiled"
+      ]
+    },
+    {
+      "id": "chunk_000025",
+      "parent_chunk_id": "chunk_000025",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000025.js",
+      "size_bytes": 119408,
+      "category": "pdfjs",
+      "tags": [
+        "pdfjs"
+      ]
+    },
+    {
+      "id": "chunk_000026",
+      "parent_chunk_id": "chunk_000026",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000026.js",
+      "size_bytes": 119326,
+      "category": "pdfjs",
+      "tags": [
+        "pdfjs",
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "chunk_000017",
+      "parent_chunk_id": "chunk_000017",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000017.js",
+      "size_bytes": 119194,
+      "category": "mcp",
+      "tags": [
+        "mcp",
+        "chat-ui"
+      ]
+    },
+    {
+      "id": "chunk_000008",
+      "parent_chunk_id": "chunk_000008",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000008.js",
+      "size_bytes": 119065,
+      "category": "mcp",
+      "tags": [
+        "highlightjs",
+        "mcp"
+      ]
+    },
+    {
+      "id": "chunk_000023",
+      "parent_chunk_id": "chunk_000023",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000023.js",
+      "size_bytes": 119014,
+      "category": "mcp",
+      "tags": [
+        "mcp",
+        "svelte-compiled",
+        "pdfjs",
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "chunk_000045",
+      "parent_chunk_id": "chunk_000045",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000045.js",
+      "size_bytes": 118988,
+      "category": "mcp",
+      "tags": [
+        "highlightjs",
+        "mcp",
+        "pdfjs"
+      ]
+    },
+    {
+      "id": "chunk_000036",
+      "parent_chunk_id": "chunk_000036",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000036.js",
+      "size_bytes": 118939,
+      "category": "katex",
+      "tags": [
+        "katex"
+      ]
+    },
+    {
+      "id": "chunk_000038",
+      "parent_chunk_id": "chunk_000038",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000038.js",
+      "size_bytes": 118816,
+      "category": "katex",
+      "tags": [
+        "katex",
+        "highlightjs",
+        "pdfjs"
+      ]
+    },
+    {
+      "id": "chunk_000044",
+      "parent_chunk_id": "chunk_000044",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000044.js",
+      "size_bytes": 118552,
+      "category": "highlightjs",
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "chunk_000021",
+      "parent_chunk_id": "chunk_000021",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000021.js",
+      "size_bytes": 118536,
+      "category": "generic-js",
+      "tags": []
+    },
+    {
+      "id": "chunk_000018",
+      "parent_chunk_id": "chunk_000018",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000018.js",
+      "size_bytes": 118507,
+      "category": "mcp",
+      "tags": [
+        "svelte-compiled",
+        "mcp",
+        "chat-ui",
+        "zod"
+      ]
+    },
+    {
+      "id": "chunk_000048",
+      "parent_chunk_id": "chunk_000048",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000048.js",
+      "size_bytes": 118337,
+      "category": "mcp",
+      "tags": [
+        "mcp",
+        "svelte-compiled",
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "chunk_000020",
+      "parent_chunk_id": "chunk_000020",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000020.js",
+      "size_bytes": 117917,
+      "category": "generic-js",
+      "tags": []
+    },
+    {
+      "id": "chunk_000034",
+      "parent_chunk_id": "chunk_000034",
+      "file": "bundle.parts.index\\refined-chunks\\chunk_000034.js",
+      "size_bytes": 117579,
+      "category": "generic-js",
+      "tags": []
+    }
+  ]
+}

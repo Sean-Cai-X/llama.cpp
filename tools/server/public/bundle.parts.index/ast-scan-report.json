@@ -1,0 +1,278 @@
+{
+  "input_file": "bundle.parts.index\\rebuilt.bundle.js",
+  "input_size_bytes": 6517562,
+  "top_level_node_count": 4988,
+  "symbol_count": 6067,
+  "largest_nodes": [
+    {
+      "id": "top_004986",
+      "kind": "const_declaration",
+      "name": "_3, pdf_worker_min, pdf_worker_min$1",
+      "size_bytes": 1042194,
+      "tags": [
+        "highlightjs",
+        "pdfjs"
+      ]
+    },
+    {
+      "id": "top_001263",
+      "kind": "function_declaration",
+      "name": "requireMathematica",
+      "size_bytes": 125406,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_004556",
+      "kind": "const_declaration",
+      "name": "SYSTEM_SYMBOLS",
+      "size_bytes": 123535,
+      "tags": []
+    },
+    {
+      "id": "top_001550",
+      "kind": "function_declaration",
+      "name": "requireDexie_min",
+      "size_bytes": 101503,
+      "tags": []
+    },
+    {
+      "id": "top_001223",
+      "kind": "function_declaration",
+      "name": "requireIsbl",
+      "size_bytes": 73061,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_004542",
+      "kind": "function_declaration",
+      "name": "isbl",
+      "size_bytes": 72953,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_001191",
+      "kind": "function_declaration",
+      "name": "requireGml",
+      "size_bytes": 62205,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_004528",
+      "kind": "function_declaration",
+      "name": "gml",
+      "size_bytes": 62108,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_003293",
+      "kind": "var_declaration",
+      "name": "fontMetricsData, sigmasAndXis, extraCharacterMap",
+      "size_bytes": 59090,
+      "tags": []
+    },
+    {
+      "id": "top_001053",
+      "kind": "function_declaration",
+      "name": "require_1c",
+      "size_bytes": 55677,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_004462",
+      "kind": "function_declaration",
+      "name": "_1c",
+      "size_bytes": 55584,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_002652",
+      "kind": "class_declaration",
+      "name": "ChatStore",
+      "size_bytes": 48968,
+      "tags": [
+        "chat-ui",
+        "mcp"
+      ]
+    },
+    {
+      "id": "top_001379",
+      "kind": "function_declaration",
+      "name": "requireSqf",
+      "size_bytes": 43305,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_004604",
+      "kind": "function_declaration",
+      "name": "sqf",
+      "size_bytes": 43207,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_002431",
+      "kind": "class_declaration",
+      "name": "CanvasGraphics",
+      "size_bytes": 39454,
+      "tags": []
+    },
+    {
+      "id": "top_002283",
+      "kind": "class_declaration",
+      "name": "MCPStore",
+      "size_bytes": 32884,
+      "tags": [
+        "mcp"
+      ]
+    },
+    {
+      "id": "top_000435",
+      "kind": "const_declaration",
+      "name": "fromTheme, arbitraryValueRegex, arbitraryVariableRegex, fractionRegex, tshirtUnitRegex, lengthUnitRegex, colorFunctionRegex, shadowRegex, imageRegex, isFraction, isNumber, isInteger, isPercent, isTshirtSize, isAny, isLengthOnly, isNever, isShadow, isImage, isAnyNonArbitrary, isArbitrarySize, isArbitraryValue, isArbitraryLength, isArbitraryNumber, isArbitraryPosition, isArbitraryImage, isArbitraryShadow, isArbitraryVariable, isArbitraryVariableLength, isArbitraryVariableFamilyName, isArbitraryVariablePosition, isArbitraryVariableSize, isArbitraryVariableImage, isArbitraryVariableShadow, getIsArbitraryValue, getIsArbitraryVariable, isLabelPosition, isLabelImage, isLabelSize, isLabelLength, isLabelNumber, isLabelFamilyName, isLabelShadow, getDefaultConfig, mergeConfigs, overrideProperty, overrideConfigProperties, mergeConfigProperties, mergeArrayProperties, extendTailwindMerge, twMerge",
+      "size_bytes": 32055,
+      "tags": []
+    },
+    {
+      "id": "top_002373",
+      "kind": "class_declaration",
+      "name": "AnnotationEditor",
+      "size_bytes": 31708,
+      "tags": [
+        "pdfjs"
+      ]
+    },
+    {
+      "id": "top_002369",
+      "kind": "class_declaration",
+      "name": "AnnotationEditorUIManager",
+      "size_bytes": 31667,
+      "tags": [
+        "highlightjs",
+        "pdfjs"
+      ]
+    },
+    {
+      "id": "top_001051",
+      "kind": "function_declaration",
+      "name": "requireCore$4",
+      "size_bytes": 30731,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_001267",
+      "kind": "function_declaration",
+      "name": "requireMaxima",
+      "size_bytes": 28894,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_004559",
+      "kind": "function_declaration",
+      "name": "maxima",
+      "size_bytes": 28779,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_003291",
+      "kind": "var_declaration",
+      "name": "hLinePad, sqrtMain, sqrtSize1, sqrtSize2, sqrtSize3, sqrtSize4, phasePath, sqrtTall, sqrtPath, innerPath, path, tallDelim",
+      "size_bytes": 23601,
+      "tags": []
+    },
+    {
+      "id": "top_001839",
+      "kind": "class_declaration",
+      "name": "Protocol",
+      "size_bytes": 22425,
+      "tags": [
+        "zod"
+      ]
+    },
+    {
+      "id": "top_001311",
+      "kind": "function_declaration",
+      "name": "requirePgsql",
+      "size_bytes": 19352,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_004579",
+      "kind": "function_declaration",
+      "name": "pgsql",
+      "size_bytes": 19241,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_001429",
+      "kind": "function_declaration",
+      "name": "requireX86asm",
+      "size_bytes": 19194,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_004624",
+      "kind": "function_declaration",
+      "name": "x86asm",
+      "size_bytes": 19078,
+      "tags": [
+        "highlightjs"
+      ]
+    },
+    {
+      "id": "top_002632",
+      "kind": "function_declaration",
+      "name": "DialogModelInformation",
+      "size_bytes": 19063,
+      "tags": [
+        "svelte-compiled"
+      ]
+    },
+    {
+      "id": "top_001472",
+      "kind": "function_declaration",
+      "name": "Toast",
+      "size_bytes": 18769,
+      "tags": [
+        "svelte-compiled"
+      ]
+    }
+  ],
+  "tag_counts": {
+    "svelte-compiled": 153,
+    "highlightjs": 432,
+    "chat-ui": 23,
+    "mcp": 53,
+    "pdfjs": 34,
+    "zod": 113,
+    "katex": 90
+  }
+}

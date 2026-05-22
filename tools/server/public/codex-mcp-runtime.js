@@ -3,6 +3,7 @@
 
   const APPROVAL_KEY = "codex.mcp.requireApproval";
   const AUTO_STACK_KEY = "codex.mcp.autoStack";
+  const WEBUI_CONFIG_KEY = "LlamaCppWebui.config";
   const LOW_RISK_COMMANDS = new Set([
     "health",
     "chat-status",
@@ -30,6 +31,40 @@
     } catch {
       // Ignore private-mode storage failures.
     }
+  }
+
+  function readWebUiConfig() {
+    try {
+      const raw = localStorage.getItem(WEBUI_CONFIG_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function writeWebUiConfigValue(key, value) {
+    try {
+      const current = readWebUiConfig();
+      current[key] = value;
+      localStorage.setItem(WEBUI_CONFIG_KEY, JSON.stringify(current));
+    } catch {
+      // Ignore private-mode storage failures.
+    }
+  }
+
+  function getApprovalRequired() {
+    const config = readWebUiConfig();
+    if (typeof config.mcpAutoAuthorizeTools === "boolean") {
+      return !config.mcpAutoAuthorizeTools;
+    }
+    return getFlag(APPROVAL_KEY, true);
+  }
+
+  function setApprovalRequired(value) {
+    setFlag(APPROVAL_KEY, !!value);
+    writeWebUiConfigValue("mcpAutoAuthorizeTools", !value);
   }
 
   function safeJsonParse(value) {
@@ -132,7 +167,7 @@
   }
 
   function confirmTool(tool) {
-    if (!tool || !getFlag(APPROVAL_KEY, true) || !isHighRiskTool(tool.name, tool.args)) return;
+    if (!tool || !getApprovalRequired() || !isHighRiskTool(tool.name, tool.args)) return;
     const text = [
       "MCP high-risk step requires confirmation.",
       "",
@@ -200,8 +235,14 @@
       desc.style.cssText = "margin-top:4px;color:rgba(255,255,255,.68);font-size:13px;line-height:1.4";
       text.append(heading, desc);
       label.append(input, text);
-      input.checked = getFlag(key, true);
-      input.onchange = () => setFlag(key, input.checked);
+      input.checked = key === APPROVAL_KEY ? getApprovalRequired() : getFlag(key, true);
+      input.onchange = () => {
+        if (key === APPROVAL_KEY) {
+          setApprovalRequired(input.checked);
+          return;
+        }
+        setFlag(key, input.checked);
+      };
       return label;
     }
 

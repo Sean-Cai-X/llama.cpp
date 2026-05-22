@@ -12,7 +12,7 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		
 		<link href="./bundle.css?v=20260424c" rel="stylesheet">
-		<script src="./codex-mcp-runtime.js?v=20260424c"></script>
+		<script src="./codex-mcp-runtime.js?v=20260521a"></script>
 		<link rel="modulepreload" href="./bundle.js?v=20260424c">
 	</head>
 	<body data-sveltekit-preload-data="hover">
@@ -105,6 +105,9 @@
 				let codexRemoteSessionsRenderQueued = false;
 				let codexRemoteSessionsLastItems = [];
 				let codexRemoteSessionsLastItemsAt = 0;
+				let codexBrowserListOverviewFetchPromise = null;
+				let codexBrowserListOverviewLastFetchAt = 0;
+				let codexBrowserListOverviewLastPayload = null;
 
 				function openCodexAuditDb() {
 					return new Promise((resolve, reject) => {
@@ -222,7 +225,11 @@
 						chip.appendChild(checkbox);
 						chip.appendChild(text);
 						checkbox.addEventListener('change', () => {
-							writeWebUiConfigValue('mcpAutoAuthorizeTools', !!checkbox.checked);
+							const nextValue = !!checkbox.checked;
+							writeWebUiConfigValue('mcpAutoAuthorizeTools', nextValue);
+							try {
+								localStorage.setItem('codex.mcp.requireApproval', nextValue ? 'false' : 'true');
+							} catch {}
 						});
 					}
 					const checkbox = chip.querySelector('input[type="checkbox"]');
@@ -298,6 +305,35 @@
 						picked[key] = value;
 					}
 					return picked;
+				}
+
+				async function fetchBrowserListOverview() {
+					const now = Date.now();
+					if (codexBrowserListOverviewFetchPromise) {
+						return codexBrowserListOverviewFetchPromise;
+					}
+					if (codexBrowserListOverviewLastPayload && now - codexBrowserListOverviewLastFetchAt < 4000) {
+						return codexBrowserListOverviewLastPayload;
+					}
+					try {
+						codexBrowserListOverviewLastFetchAt = now;
+						codexBrowserListOverviewFetchPromise = (async () => {
+							const tryPaths = ['./overview/browser-list', './browser-list-overview'];
+							for (const path of tryPaths) {
+								try {
+									const response = await fetch(path, { method: 'GET' });
+									if (!response.ok) continue;
+									const payload = await response.json();
+									codexBrowserListOverviewLastPayload = payload;
+									return payload;
+								} catch {}
+							}
+							return null;
+						})();
+						return await codexBrowserListOverviewFetchPromise;
+					} finally {
+						codexBrowserListOverviewFetchPromise = null;
+					}
 				}
 
 				async function fetchRemoteSessions(limit = 20) {
@@ -458,7 +494,8 @@
 						try {
 							if (status) status.textContent = 'Sending...';
 							const body = buildRemoteSessionAppendParams(overlay);
-							if (!body.auto_authorize && !window.confirm('当前未开启默认授权。是否继续发送本轮 remote session append？')) {
+							const skipConfirm = !!readWebUiConfigFromStorage().mcpAutoAuthorizeTools;
+							if (!skipConfirm && !body.auto_authorize && !window.confirm('当前未开启默认授权。是否继续发送本轮 remote session append？')) {
 								if (status) status.textContent = 'Send canceled.';
 								return;
 							}
@@ -986,8 +1023,12 @@
 				async function loadRemoteSessionModal(sessionId) {
 					const overlay = ensureRemoteSessionModal();
 					const status = overlay.querySelector('.codex-remote-session-status');
+					const autoAuthorizeCheckbox = overlay.querySelector('#codex-remote-param-auto-authorize');
 					overlay.dataset.sessionId = sessionId;
 					overlay.style.display = 'flex';
+					if (autoAuthorizeCheckbox instanceof HTMLInputElement) {
+						autoAuthorizeCheckbox.checked = !!readWebUiConfigFromStorage().mcpAutoAuthorizeTools;
+					}
 					try {
 						overlay.codexInheritedModelConfig = await buildInheritedModelConfig();
 					} catch (error) {
@@ -1427,6 +1468,23 @@
 					return (value || '').replace(/\s+/g, ' ').trim();
 				}
 
+				function normalizeSidebarHeadingText(value) {
+					return normalizeText(value).replace(/^[>v]\s+/, '');
+				}
+
+				function isConversationSectionHeading(node) {
+					const text = normalizeSidebarHeadingText(node?.textContent || '');
+					return text === 'Conversations' || text === 'Search results';
+				}
+
+				function findConversationSectionLabel() {
+					const preferred = Array.from(
+						document.querySelectorAll('[data-sidebar="group-label"], [data-slot="sidebar-group-label"]')
+					).find((node) => isConversationSectionHeading(node));
+					if (preferred) return preferred;
+					return Array.from(document.querySelectorAll('*')).find((node) => isConversationSectionHeading(node));
+				}
+
 				async function listAuditConversations() {
 					const conversations = await readStoreAll('conversations');
 					return conversations.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
@@ -1522,9 +1580,7 @@
 						'white-space: pre-wrap',
 						'color: rgba(255,255,255,0.82)'
 					].join(';');
-					const sidebarLabel = Array.from(document.querySelectorAll('*')).find((node) => {
-						return normalizeText(node.textContent || '') === 'Conversations';
-					});
+					const sidebarLabel = findConversationSectionLabel();
 					if (!sidebarLabel || !sidebarLabel.parentElement) return panel;
 					const anchor = sidebarLabel.parentElement.parentElement;
 					if (anchor) {
@@ -1652,10 +1708,7 @@
 				}
 
 				function findSidebarConversationButtons() {
-					const sidebarTextNodes = Array.from(document.querySelectorAll('*')).filter((node) => {
-						return normalizeText(node.textContent || '') === 'Conversations';
-					});
-					const sidebarLabel = sidebarTextNodes[0];
+					const sidebarLabel = findConversationSectionLabel();
 					if (!sidebarLabel) return [];
 					let container = sidebarLabel.parentElement;
 					for (let i = 0; i < 6 && container; i += 1) {
@@ -1675,30 +1728,439 @@
 					return buttons[0].parentElement;
 				}
 
+				const CODEX_SIDEBAR_SECTION_STATE_KEY = 'codex.sidebar.section.state';
+				const CODEX_SIDEBAR_SECTION_STATE_VERSION_KEY = 'codex.sidebar.section.state.version';
+				const CODEX_SIDEBAR_SECTION_STATE_VERSION = 'browser-list-overview-v3';
+				let codexSidebarSectionStateMigrated = false;
+
+				function migrateSidebarSectionStateOnce() {
+					if (codexSidebarSectionStateMigrated) return;
+					codexSidebarSectionStateMigrated = true;
+					try {
+						const currentVersion = localStorage.getItem(CODEX_SIDEBAR_SECTION_STATE_VERSION_KEY);
+						if (currentVersion === CODEX_SIDEBAR_SECTION_STATE_VERSION) return;
+						localStorage.removeItem(CODEX_SIDEBAR_SECTION_STATE_KEY);
+						localStorage.setItem(CODEX_SIDEBAR_SECTION_STATE_VERSION_KEY, CODEX_SIDEBAR_SECTION_STATE_VERSION);
+					} catch {}
+				}
+
+				function readSidebarSectionState() {
+					try {
+						migrateSidebarSectionStateOnce();
+						const raw = localStorage.getItem(CODEX_SIDEBAR_SECTION_STATE_KEY);
+						if (!raw) return {};
+						const parsed = JSON.parse(raw);
+						return parsed && typeof parsed === 'object' ? parsed : {};
+					} catch {
+						return {};
+					}
+				}
+
+				function writeSidebarSectionState(nextState) {
+					try {
+						migrateSidebarSectionStateOnce();
+						localStorage.setItem(CODEX_SIDEBAR_SECTION_STATE_KEY, JSON.stringify(nextState || {}));
+					} catch {}
+				}
+
+				function isSidebarSectionCollapsed(sectionId) {
+					const state = readSidebarSectionState();
+					return !!state[sectionId];
+				}
+
+				function setSidebarSectionCollapsed(sectionId, collapsed) {
+					const state = readSidebarSectionState();
+					state[sectionId] = !!collapsed;
+					writeSidebarSectionState(state);
+				}
+
+				function ensureSectionChevron(toggle) {
+					let chevron = toggle.querySelector('.codex-sidebar-section-chevron');
+					if (chevron) return chevron;
+					chevron = document.createElement('span');
+					chevron.className = 'codex-sidebar-section-chevron';
+					chevron.setAttribute('aria-hidden', 'true');
+					chevron.style.cssText = [
+						'display:inline-flex',
+						'align-items:center',
+						'justify-content:center',
+						'width:14px',
+						'min-width:14px',
+						'font-size:11px',
+						'opacity:0.82',
+						'transition:transform 120ms ease'
+					].join(';');
+					toggle.insertBefore(chevron, toggle.firstChild);
+					return chevron;
+				}
+
+				function applySidebarSectionCollapsed(sectionId, toggle, body) {
+					if (!toggle || !body) return;
+					const collapsed = isSidebarSectionCollapsed(sectionId);
+					const chevron = ensureSectionChevron(toggle);
+					body.style.display = collapsed ? 'none' : '';
+					toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+					chevron.textContent = collapsed ? '>' : 'v';
+				}
+
+				function ensureSidebarSectionToggle(sectionId, toggle, body) {
+					if (!toggle || !body) return;
+					toggle.style.cursor = 'pointer';
+					toggle.style.userSelect = 'none';
+					if (!toggle.dataset.codexSidebarSectionToggleBound) {
+						toggle.dataset.codexSidebarSectionToggleBound = 'true';
+						toggle.addEventListener('click', (event) => {
+							event.preventDefault();
+							event.stopPropagation();
+							const nextCollapsed = !isSidebarSectionCollapsed(sectionId);
+							setSidebarSectionCollapsed(sectionId, nextCollapsed);
+							applySidebarSectionCollapsed(sectionId, toggle, body);
+						});
+					}
+					applySidebarSectionCollapsed(sectionId, toggle, body);
+				}
+
+				function ensureConversationsSectionCollapsible() {
+					const sidebarLabel = findConversationSectionLabel();
+					if (!sidebarLabel) return;
+					const headingRow =
+						sidebarLabel.closest?.('[data-sidebar="group-label"]') ||
+						sidebarLabel.closest?.('[data-slot="sidebar-group-label"]') ||
+						sidebarLabel;
+					const sectionRoot =
+						headingRow.closest?.('[data-sidebar="group"]') ||
+						headingRow.parentElement;
+					const body =
+						sectionRoot?.querySelector?.(':scope > [data-sidebar="group-content"]') ||
+						headingRow.nextElementSibling;
+					if (!body) return;
+					headingRow.style.display = 'flex';
+					headingRow.style.alignItems = 'center';
+					headingRow.style.gap = '6px';
+					headingRow.style.width = '100%';
+					ensureSidebarSectionToggle('conversations', headingRow, body);
+				}
+
+				function ensureOverviewSectionContainer() {
+					let section = document.getElementById('codex-browser-overview-list');
+					if (section) return section;
+					const sidebarLabel = findConversationSectionLabel();
+					if (!sidebarLabel) return null;
+					const headingRow =
+						sidebarLabel.closest?.('[data-sidebar="group-label"]') ||
+						sidebarLabel.closest?.('[data-slot="sidebar-group-label"]') ||
+						sidebarLabel;
+					const sectionRoot =
+						headingRow.closest?.('[data-sidebar="group"]') ||
+						headingRow.parentElement;
+					const sectionHost =
+						sectionRoot?.parentElement ||
+						headingRow.parentElement;
+					if (!sectionHost) return null;
+					section = document.createElement('div');
+					section.id = 'codex-browser-overview-list';
+					section.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin:8px 0 12px 0;';
+					const heading = document.createElement('button');
+					heading.type = 'button';
+					heading.className = 'codex-browser-overview-heading';
+					heading.style.cssText = [
+						'display:flex',
+						'align-items:center',
+						'gap:6px',
+						'width:100%',
+						'padding:0 12px 0 12px',
+						'border:none',
+						'background:transparent',
+						'color:inherit',
+						'font-size:12px',
+						'line-height:1.2',
+						'opacity:0.72',
+						'text-align:left',
+						'cursor:pointer'
+					].join(';');
+					const headingLabel = document.createElement('span');
+					headingLabel.className = 'codex-browser-overview-heading-label';
+					headingLabel.textContent = 'Overview';
+					heading.appendChild(headingLabel);
+					const list = document.createElement('div');
+					list.className = 'codex-browser-overview-items';
+					list.style.cssText = 'display:flex;flex-direction:column;gap:6px;padding:0 8px;';
+					section.appendChild(heading);
+					section.appendChild(list);
+					const remoteSection = document.getElementById('codex-remote-conversation-list');
+					sectionHost.insertBefore(section, remoteSection || sectionRoot || headingRow);
+					ensureSidebarSectionToggle('overview', heading, list);
+					return section;
+				}
+
 				function ensureRemoteConversationListContainer() {
 					let container = document.getElementById('codex-remote-conversation-list');
 					if (container) return container;
-					const sidebarLabel = Array.from(document.querySelectorAll('*')).find((node) => {
-						return normalizeText(node.textContent || '') === 'Conversations';
-					});
-					if (!sidebarLabel || !sidebarLabel.parentElement) return null;
-					const headingRow = sidebarLabel.parentElement;
-					const sectionHost = headingRow.parentElement;
+					const sidebarLabel = findConversationSectionLabel();
+					if (!sidebarLabel) return null;
+					const headingRow =
+						sidebarLabel.closest?.('[data-sidebar="group-label"]') ||
+						sidebarLabel.closest?.('[data-slot="sidebar-group-label"]') ||
+						sidebarLabel;
+					const sectionRoot =
+						headingRow.closest?.('[data-sidebar="group"]') ||
+						headingRow.parentElement;
+					const sectionHost =
+						sectionRoot?.parentElement ||
+						headingRow.parentElement;
 					if (!sectionHost) return null;
 					const section = document.createElement('div');
 					section.id = 'codex-remote-conversation-list';
 					section.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin:8px 0 12px 0;';
-					const heading = document.createElement('div');
-					heading.textContent = 'Remote Sessions';
+					const heading = document.createElement('button');
+					heading.type = 'button';
 					heading.className = 'codex-remote-conversation-heading';
-					heading.style.cssText = 'font-size:12px;line-height:1.2;opacity:0.72;padding:0 12px 0 12px;';
+					heading.style.cssText = [
+						'display:flex',
+						'align-items:center',
+						'gap:6px',
+						'width:100%',
+						'padding:0 12px 0 12px',
+						'border:none',
+						'background:transparent',
+						'color:inherit',
+						'font-size:12px',
+						'line-height:1.2',
+						'opacity:0.72',
+						'text-align:left',
+						'cursor:pointer'
+					].join(';');
+					const headingLabel = document.createElement('span');
+					headingLabel.className = 'codex-remote-conversation-heading-label';
+					headingLabel.textContent = 'Remote Sessions';
+					heading.appendChild(headingLabel);
 					const list = document.createElement('div');
 					list.className = 'codex-remote-conversation-items';
 					list.style.cssText = 'display:flex;flex-direction:column;gap:6px;padding:0 8px;';
 					section.appendChild(heading);
 					section.appendChild(list);
-					sectionHost.insertBefore(section, headingRow);
+					sectionHost.insertBefore(section, sectionRoot || headingRow);
+					ensureSidebarSectionToggle('remote-sessions', heading, list);
 					return section;
+				}
+
+				function createOverviewCard(card) {
+					const node = document.createElement('div');
+					node.className = 'codex-browser-overview-card';
+					node.dataset.sectionId = card.id || '';
+					node.style.cssText = [
+						'display:flex',
+						'flex-direction:column',
+						'gap:4px',
+						'width:100%',
+						'padding:10px 12px',
+						'border-radius:12px',
+						'background:rgba(255,255,255,0.04)',
+						'outline:1px solid rgba(255,255,255,0.08)',
+						'color:inherit',
+						'text-align:left'
+					].join(';');
+					const titleRow = document.createElement('div');
+					titleRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+					const title = document.createElement('div');
+					title.className = 'codex-browser-overview-card-title';
+					title.style.cssText = 'font-size:13px;line-height:1.2;font-weight:600;';
+					const badge = document.createElement('span');
+					badge.className = 'codex-browser-overview-card-badge';
+					badge.style.cssText = 'font-size:11px;line-height:1;padding:3px 8px;border-radius:999px;background:rgba(255,255,255,0.08);opacity:0.9;';
+					titleRow.appendChild(title);
+					titleRow.appendChild(badge);
+					const meta = document.createElement('div');
+					meta.className = 'codex-browser-overview-card-meta';
+					meta.style.cssText = 'font-size:11px;line-height:1.25;opacity:0.74;';
+					const summary = document.createElement('div');
+					summary.className = 'codex-browser-overview-card-summary';
+					summary.style.cssText = 'font-size:12px;line-height:1.35;opacity:0.82;';
+					node.appendChild(titleRow);
+					node.appendChild(meta);
+					node.appendChild(summary);
+					updateOverviewCard(node, card);
+					return node;
+				}
+
+				function updateOverviewCard(node, card) {
+					if (!node || !card) return;
+					node.dataset.sectionId = card.id || card.browser_section_id || '';
+					const title = node.querySelector('.codex-browser-overview-card-title');
+					const badge = node.querySelector('.codex-browser-overview-card-badge');
+					const meta = node.querySelector('.codex-browser-overview-card-meta');
+					const summary = node.querySelector('.codex-browser-overview-card-summary');
+					const nextTitle = card.title || card.browser_section_title || card.id || 'Overview';
+					const nextStatus = normalizeText(card.status || card.browser_status || 'unknown');
+					const nextCount = card.primary_count ?? card.browser_primary_count ?? '';
+					const nextMeta = [
+						nextStatus ? `status ${nextStatus}` : '',
+						nextCount !== '' ? `count ${nextCount}` : '',
+						card.tool_name || card.browser_tool_name || '',
+						card.http_get_path || card.browser_http_get_path || ''
+					].filter(Boolean).join(' | ');
+					const nextSummary = normalizeText(card.summary || '');
+					if (title) title.textContent = nextTitle;
+					if (badge) badge.textContent = nextStatus || 'unknown';
+					if (meta) meta.textContent = nextMeta;
+					if (summary) summary.textContent = nextSummary || '(no summary)';
+					node.title = [
+						nextTitle,
+						nextMeta,
+						card.browser_route_hint || card.route_hint || '',
+						card.payload_field || card.browser_payload_field || ''
+					].filter(Boolean).join(' | ');
+				}
+
+				function renderOverviewPlaceholder(container, title, summary) {
+					if (!container) return;
+					let node = container.querySelector('.codex-browser-overview-placeholder');
+					if (!node) {
+						node = document.createElement('div');
+						node.className = 'codex-browser-overview-card codex-browser-overview-placeholder';
+						node.style.cssText = [
+							'display:flex',
+							'flex-direction:column',
+							'gap:4px',
+							'width:100%',
+							'padding:10px 12px',
+							'border-radius:12px',
+							'background:rgba(255,255,255,0.04)',
+							'outline:1px solid rgba(255,255,255,0.08)',
+							'color:inherit',
+							'text-align:left'
+						].join(';');
+						container.appendChild(node);
+					}
+					node.textContent = `${title}: ${summary}`;
+				}
+
+				function getDefaultBrowserOverviewSections(status = 'pending', summary = 'Waiting for browser-list overview.') {
+					return [
+						{
+							id: 'health',
+							title: 'Health',
+							tool_name: 'lan_agent_runtime_overview',
+							http_get_path: '/runtime-overview',
+							browser_route_hint: '/health',
+							status,
+							primary_count: '',
+							summary,
+							payload_field: 'last_request_entry'
+						},
+						{
+							id: 'remote_sessions',
+							title: 'Remote Sessions',
+							tool_name: 'lan_agent_remote_session_overview',
+							http_get_path: '/overview/remote-sessions',
+							browser_route_hint: '/remote-sessions',
+							status,
+							primary_count: '',
+							summary,
+							payload_field: 'session_items_json'
+						},
+						{
+							id: 'tasks',
+							title: 'Tasks',
+							tool_name: 'lan_agent_task_overview',
+							http_get_path: '/overview/tasks',
+							browser_route_hint: '/tasks',
+							status,
+							primary_count: '',
+							summary,
+							payload_field: 'latest_task_json'
+						},
+						{
+							id: 'events',
+							title: 'Events',
+							tool_name: 'lan_agent_event_overview',
+							http_get_path: '/overview/events',
+							browser_route_hint: '/events',
+							status,
+							primary_count: '',
+							summary,
+							payload_field: 'events_json'
+						},
+						{
+							id: 'mcp',
+							title: 'MCP',
+							tool_name: 'lan_agent_mcp_overview',
+							http_get_path: '/overview/mcp',
+							browser_route_hint: '/mcp',
+							status,
+							primary_count: '',
+							summary,
+							payload_field: 'tool_names_json'
+						},
+						{
+							id: 'rag',
+							title: 'RAG',
+							tool_name: 'lan_agent_rag_overview',
+							http_get_path: '/overview/rag',
+							browser_route_hint: '/rag',
+							status,
+							primary_count: '',
+							summary,
+							payload_field: 'capabilities'
+						}
+					];
+				}
+
+				function normalizeOverviewCard(card) {
+					const sectionId = card?.id || card?.browser_section_id || '';
+					return {
+						...card,
+						id: sectionId,
+						title: card?.title || card?.browser_section_title || sectionId || 'Overview',
+						tool_name: card?.tool_name || card?.browser_tool_name || '',
+						http_get_path: card?.http_get_path || card?.browser_http_get_path || '',
+						browser_route_hint: card?.browser_route_hint || card?.route_hint || '',
+						status: card?.status || card?.browser_status || 'unknown',
+						primary_count: card?.primary_count ?? card?.browser_primary_count ?? '',
+						payload_field: card?.payload_field || card?.browser_payload_field || '',
+						summary: card?.summary || ''
+					};
+				}
+
+				function mergeBrowserOverviewSections(incomingSections, fallbackStatus = 'unavailable') {
+					const defaults = getDefaultBrowserOverviewSections(
+						fallbackStatus,
+						fallbackStatus === 'pending'
+							? 'Waiting for browser-list overview.'
+							: 'Browser-list overview did not return this section yet.'
+					);
+					const byId = new Map(defaults.map((card) => [card.id, card]));
+					for (const card of incomingSections || []) {
+						const normalized = normalizeOverviewCard(card);
+						if (!normalized.id) continue;
+						byId.set(normalized.id, { ...(byId.get(normalized.id) || {}), ...normalized });
+					}
+					const ordered = defaults.map((card) => byId.get(card.id)).filter(Boolean);
+					const extras = Array.from(byId.values()).filter((card) => !defaults.some((item) => item.id === card.id));
+					return [...ordered, ...extras];
+				}
+
+				function renderOverviewCards(container, sections) {
+					if (!container) return;
+					const validIds = new Set();
+					Array.from(container.querySelectorAll('.codex-browser-overview-placeholder')).forEach((node) => node.remove());
+					for (const card of sections || []) {
+						const sectionId = card.id || card.browser_section_id || '';
+						if (!sectionId) continue;
+						validIds.add(sectionId);
+						let node = container.querySelector(`.codex-browser-overview-card[data-section-id="${sectionId}"]`);
+						if (!node) {
+							node = createOverviewCard(card);
+							container.appendChild(node);
+						} else {
+							updateOverviewCard(node, card);
+						}
+					}
+					Array.from(container.querySelectorAll('.codex-browser-overview-card')).forEach((node) => {
+						if (!validIds.has(node.dataset.sectionId || '')) {
+							node.remove();
+						}
+					});
 				}
 
 				function createRemoteConversationButton(conversation, latestAssistantMessage) {
@@ -1909,14 +2371,18 @@
 					if (!section) return;
 					const container = section.querySelector('.codex-remote-conversation-items');
 					const heading = section.querySelector('.codex-remote-conversation-heading');
+					const headingLabel = section.querySelector('.codex-remote-conversation-heading-label');
 					if (!container) return;
 					let remoteSessions = await fetchRemoteSessions(20);
 					if (!remoteSessions.length && codexRemoteSessionsLastItems.length && (Date.now() - codexRemoteSessionsLastItemsAt) < 60000) {
 						remoteSessions = codexRemoteSessionsLastItems;
 					}
 					const validSessionIds = new Set();
-					if (heading) {
-						heading.textContent = remoteSessions.length ? `Remote Sessions (${remoteSessions.length})` : 'Remote Sessions';
+					if (heading && container) {
+						ensureSidebarSectionToggle('remote-sessions', heading, container);
+					}
+					if (headingLabel) {
+						headingLabel.textContent = remoteSessions.length ? `Remote Sessions (${remoteSessions.length})` : 'Remote Sessions';
 					}
 					if (!remoteSessions.length) {
 						Array.from(container.querySelectorAll('.codex-remote-conversation-button')).forEach((button) => button.remove());
@@ -1973,6 +2439,37 @@
 					});
 				}
 
+				async function renderOverviewBrowserList() {
+					const section = ensureOverviewSectionContainer();
+					if (!section) return;
+					const container = section.querySelector('.codex-browser-overview-items');
+					const heading = section.querySelector('.codex-browser-overview-heading');
+					const headingLabel = section.querySelector('.codex-browser-overview-heading-label');
+					if (!container) return;
+					if (heading) {
+						ensureSidebarSectionToggle('overview', heading, container);
+					}
+					renderOverviewCards(container, mergeBrowserOverviewSections([], 'pending'));
+					if (headingLabel) {
+						headingLabel.textContent = 'Overview (6)';
+					}
+					const payload = await fetchBrowserListOverview();
+					const parsedSections = parseRemoteJsonLike(payload?.sections_json);
+					const incomingSections = Array.isArray(parsedSections)
+						? parsedSections
+						: Array.isArray(payload?.sections)
+							? payload.sections
+							: [];
+					const sections = mergeBrowserOverviewSections(
+						incomingSections,
+						payload ? 'unavailable' : 'failed'
+					);
+					if (headingLabel) {
+						headingLabel.textContent = `Overview (${sections.length})`;
+					}
+					renderOverviewCards(container, sections);
+				}
+
 				function installAuditSidebarObserver() {
 					const scheduleDecorate = () => {
 						if (codexRemoteSessionsRenderQueued) return;
@@ -1980,8 +2477,10 @@
 						window.requestAnimationFrame(async () => {
 							codexRemoteSessionsRenderQueued = false;
 							ensureSkipMcpConfirmControl();
-							decorateSidebarConversationList().catch(() => {});
+							renderOverviewBrowserList().catch(() => {});
 							renderRemoteConversationList().catch(() => {});
+							ensureConversationsSectionCollapsible();
+							decorateSidebarConversationList().catch(() => {});
 							renderAuditSummaryPanel().catch(() => {});
 							decorateMessageStatistics().catch(() => {});
 						});

@@ -1,0 +1,10 @@
+{
+  "input_chunk_count": 52,
+  "refined_chunk_count": 54,
+  "oversized_parent_count": 1,
+  "target_refined_chunk_bytes": 90000,
+  "max_refined_chunk_bytes": 140000,
+  "max_output_size_bytes": 1041956,
+  "min_output_size_bytes": 18,
+  "avg_output_size_bytes": 120696
+}

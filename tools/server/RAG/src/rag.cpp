@@ -1,5 +1,6 @@
 #include "rag.h"
 #include "rag_metadata.h"
+#include "rag_storage.h"
 
 #include "faiss/IndexFlat.h"
 #include "faiss/index_io.h"
@@ -12,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -517,58 +519,21 @@ void RagEngine::save() {
             std::ofstream out(config_.index_path + ".meta.json", std::ios::binary);
             out << json(metadata_).dump();
         }
-        {
-            json vector_map;
-            vector_map["schema_version"] = 1;
-            vector_map["index_name"] = config_.index_path;
-            vector_map["store_model"] = "rag_vector_slice_map_v1";
-            vector_map["vector_to_slice"] = json::object();
-            vector_map["slice_to_vector"] = json::object();
-            for (size_t i = 0; i < vector_slice_ids_.size(); ++i) {
-                const std::string & slice_id = vector_slice_ids_[i];
-                if (slice_id.empty()) {
-                    continue;
-                }
-                vector_map["vector_to_slice"][std::to_string(i)] = slice_id;
-            }
-            for (const auto & item : slice_vector_ids_) {
-                vector_map["slice_to_vector"][item.first] = item.second;
-            }
-            std::ofstream out(config_.index_path + ".vectors.json", std::ios::binary);
-            out << vector_map.dump();
+        RagFileStorage storage(config_.index_path);
+        storage.save_manifest();
+        storage.save_vector_slice_map(RagVectorSliceMap{vector_slice_ids_, slice_vector_ids_});
+        RagRawSliceStore raw_store;
+        for (const auto & item : raw_slice_text_) {
+            const std::string & slice_id = item.first;
+            raw_store.slices[slice_id] = RagRawSliceRecord{
+                slice_id,
+                item.second,
+                raw_slice_metadata_[slice_id],
+                raw_slice_hashes_[slice_id],
+                slice_vector_ids_.count(slice_id) ? slice_vector_ids_[slice_id] : -1,
+            };
         }
-        {
-            json raw_store;
-            raw_store["schema_version"] = 1;
-            raw_store["store_model"] = "rag_raw_slice_store_v1";
-            raw_store["index_name"] = config_.index_path;
-            raw_store["slices"] = json::object();
-            raw_store["records"] = json::object();
-
-            for (const auto & item : raw_slice_text_) {
-                const std::string & slice_id = item.first;
-                const std::string & raw_text = item.second;
-                const rag_json metadata = rag_parse_metadata(raw_slice_metadata_[slice_id]);
-                const json metadata_json = json::parse(rag_metadata_to_string(metadata));
-                const std::string text_hash = raw_slice_hashes_[slice_id];
-                const int vector_id = slice_vector_ids_.count(slice_id) ? slice_vector_ids_[slice_id] : -1;
-
-                raw_store["slices"][slice_id] = json{
-                    {"slice_id", slice_id},
-                    {"raw", raw_text},
-                    {"meta", metadata_json},
-                    {"hash", text_hash},
-                    {"vector_id", vector_id},
-                };
-
-                raw_store["records"]["slice:" + slice_id + ":raw"] = raw_text;
-                raw_store["records"]["slice:" + slice_id + ":meta"] = metadata_json;
-                raw_store["records"]["slice:" + slice_id + ":hash"] = text_hash;
-            }
-
-            std::ofstream out(config_.index_path + ".raw_slices.json", std::ios::binary);
-            out << raw_store.dump();
-        }
+        storage.save_raw_slices(raw_store);
         {
             json hashes;
             hashes["file_hashes"] = file_hashes_;
@@ -615,28 +580,11 @@ bool RagEngine::load() {
             vector_slice_ids_.clear();
             slice_vector_ids_.clear();
 
-            std::ifstream in(config_.index_path + ".vectors.json", std::ios::binary);
-            if (in.is_open()) {
-                json j;
-                in >> j;
-                const json vector_to_slice = j.value("vector_to_slice", json::object());
-                vector_slice_ids_.resize(chunks_.size());
-                for (auto it = vector_to_slice.begin(); it != vector_to_slice.end(); ++it) {
-                    try {
-                        const size_t vector_id = static_cast<size_t>(std::stoull(it.key()));
-                        if (vector_id < vector_slice_ids_.size() && it.value().is_string()) {
-                            vector_slice_ids_[vector_id] = it.value().get<std::string>();
-                        }
-                    } catch (...) {
-                    }
-                }
-
-                const json slice_to_vector = j.value("slice_to_vector", json::object());
-                for (auto it = slice_to_vector.begin(); it != slice_to_vector.end(); ++it) {
-                    if (it.value().is_number_integer()) {
-                        slice_vector_ids_[it.key()] = it.value().get<int>();
-                    }
-                }
+            RagFileStorage storage(config_.index_path);
+            RagVectorSliceMap vector_map;
+            if (storage.load_vector_slice_map(vector_map)) {
+                vector_slice_ids_ = std::move(vector_map.vector_to_slice);
+                slice_vector_ids_ = std::move(vector_map.slice_to_vector);
             }
 
             if (vector_slice_ids_.size() < metadata_.size()) {
@@ -661,24 +609,13 @@ bool RagEngine::load() {
             raw_slice_metadata_.clear();
             raw_slice_hashes_.clear();
 
-            std::ifstream in(config_.index_path + ".raw_slices.json", std::ios::binary);
-            if (in.is_open()) {
-                json j;
-                in >> j;
-                const json slices = j.value("slices", json::object());
-                for (auto it = slices.begin(); it != slices.end(); ++it) {
-                    if (!it.value().is_object()) {
-                        continue;
-                    }
-                    const std::string slice_id = it.value().value("slice_id", it.key());
-                    if (slice_id.empty()) {
-                        continue;
-                    }
-                    raw_slice_text_[slice_id] = it.value().value("raw", "");
-                    raw_slice_metadata_[slice_id] = it.value().contains("meta")
-                        ? it.value()["meta"].dump()
-                        : "";
-                    raw_slice_hashes_[slice_id] = it.value().value("hash", "");
+            RagFileStorage storage(config_.index_path);
+            RagRawSliceStore raw_store;
+            if (storage.load_raw_slices(raw_store)) {
+                for (auto & item : raw_store.slices) {
+                    raw_slice_text_[item.first] = std::move(item.second.raw_text);
+                    raw_slice_metadata_[item.first] = std::move(item.second.metadata_json);
+                    raw_slice_hashes_[item.first] = std::move(item.second.text_hash);
                 }
             }
 
