@@ -12,6 +12,8 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <fstream>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -21,6 +23,24 @@
 namespace {
 
 std::atomic<uint64_t> g_rag_trace_counter {0};
+
+json read_json_object_from_file(const std::string & path) {
+    if (path.empty()) {
+        return json::object();
+    }
+
+    try {
+        std::ifstream in(path, std::ios::binary);
+        if (!in.is_open()) {
+            return json::object();
+        }
+        json value;
+        in >> value;
+        return value.is_object() ? value : json::object();
+    } catch (...) {
+        return json::object();
+    }
+}
 
 std::string trim_copy(std::string value) {
     auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
@@ -41,6 +61,612 @@ std::string sanitize_rag_preview(std::string text, size_t max_chars = 240) {
         text += "...";
     }
     return text;
+}
+
+json load_rag_json_file(const std::string & path) {
+    std::ifstream input(path, std::ios::in | std::ios::binary);
+    if (!input) {
+        return json::object();
+    }
+
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    if (buffer.str().empty()) {
+        return json::object();
+    }
+
+    try {
+        return json::parse(buffer.str());
+    } catch (...) {
+        return json::object();
+    }
+}
+
+std::vector<std::string> json_string_array(const json & value) {
+    std::vector<std::string> result;
+    if (!value.is_array()) {
+        return result;
+    }
+    for (const auto & item : value) {
+        if (item.is_string()) {
+            result.push_back(item.get<std::string>());
+        }
+    }
+    return result;
+}
+
+bool fact_contains_all(
+        const std::vector<std::string> & facts,
+        const std::vector<std::string> & needles,
+        std::string * matched_fact = nullptr) {
+    for (const auto & fact : facts) {
+        bool matched = true;
+        for (const auto & needle : needles) {
+            if (fact.find(needle) == std::string::npos) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched) {
+            if (matched_fact != nullptr) {
+                *matched_fact = fact;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+json build_clips_fact_subset(const std::vector<std::string> & facts, const std::string & template_name) {
+    json result = json::array();
+    const std::string marker = "(" + template_name;
+    for (const auto & fact : facts) {
+        if (fact.find(marker) != std::string::npos) {
+            result.push_back(fact);
+        }
+    }
+    return result;
+}
+
+json make_baseline_case_result(
+        const std::string & case_id,
+        const std::string & expected,
+        const std::vector<std::string> & needles,
+        const std::vector<std::string> & facts) {
+    std::string matched_fact;
+    const bool passed = fact_contains_all(facts, needles, &matched_fact);
+    return json{
+        {"case_id", case_id},
+        {"expected", expected},
+        {"pass", passed},
+        {"matched_fact", matched_fact},
+        {"required_substrings", needles},
+    };
+}
+
+json evaluate_viewpoint_baseline(const std::vector<std::string> & facts) {
+    json cases = json::array({
+        make_baseline_case_result(
+            "VP-FACT-NO-EVIDENCE",
+            "REJECT / FACT_CLAIM_WITHOUT_VERIFIED_EVIDENCE",
+            {"viewpoint-decision", "VP-FACT-NO-EVIDENCE", "REJECT", "FACT_CLAIM_WITHOUT_VERIFIED_EVIDENCE"},
+            facts),
+        make_baseline_case_result(
+            "VP-FACT-WITH-EVIDENCE",
+            "APPROVE / FACT_CLAIM_SUPPORTED_BY_VERIFIED_EVIDENCE",
+            {"viewpoint-decision", "VP-FACT-WITH-EVIDENCE", "APPROVE", "FACT_CLAIM_SUPPORTED_BY_VERIFIED_EVIDENCE"},
+            facts),
+        make_baseline_case_result(
+            "VP-SPECULATION",
+            "DOWNGRADE_TO_HYPOTHESIS / SPECULATION_CANNOT_BE_TREATED_AS_FACT",
+            {"viewpoint-decision", "VP-SPECULATION", "DOWNGRADE_TO_HYPOTHESIS", "SPECULATION_CANNOT_BE_TREATED_AS_FACT"},
+            facts),
+    });
+
+    int pass_count = 0;
+    for (const auto & item : cases) {
+        if (item.value("pass", false)) {
+            pass_count++;
+        }
+    }
+
+    return json{
+        {"case_count", static_cast<int>(cases.size())},
+        {"pass_count", pass_count},
+        {"fail_count", static_cast<int>(cases.size()) - pass_count},
+        {"pass", pass_count == static_cast<int>(cases.size())},
+        {"cases", std::move(cases)},
+    };
+}
+
+json evaluate_coupling_baseline(const std::vector<std::string> & facts) {
+    json cases = json::array({
+        make_baseline_case_result(
+            "CC-SELF",
+            "REJECT / SELF_COUPLING_NOT_ALLOWED",
+            {"coupling-decision", "CC-SELF", "REJECT", "SELF_COUPLING_NOT_ALLOWED"},
+            facts),
+        make_baseline_case_result(
+            "CC-LOW",
+            "REJECT / COUPLING_SCORE_BELOW_POLICY_THRESHOLD",
+            {"coupling-decision", "CC-LOW", "REJECT", "COUPLING_SCORE_BELOW_POLICY_THRESHOLD"},
+            facts),
+        make_baseline_case_result(
+            "CC-ALLOW",
+            "APPROVE / COUPLING_ALLOWED_BY_POLICY",
+            {"coupling-decision", "CC-ALLOW", "APPROVE", "COUPLING_ALLOWED_BY_POLICY"},
+            facts),
+        make_baseline_case_result(
+            "CC-ALLOW:slice-edge",
+            "slice-edge VERIFIED",
+            {"slice-edge", "CC-ALLOW", "VERIFIED"},
+            facts),
+    });
+
+    int pass_count = 0;
+    for (const auto & item : cases) {
+        if (item.value("pass", false)) {
+            pass_count++;
+        }
+    }
+
+    return json{
+        {"case_count", static_cast<int>(cases.size())},
+        {"pass_count", pass_count},
+        {"fail_count", static_cast<int>(cases.size()) - pass_count},
+        {"pass", pass_count == static_cast<int>(cases.size())},
+        {"cases", std::move(cases)},
+    };
+}
+
+std::string normalize_clips_baseline_id(std::string baseline_id) {
+    const std::string prefix = "baseline:";
+    if (baseline_id.rfind(prefix, 0) == 0) {
+        baseline_id = baseline_id.substr(prefix.size());
+    }
+    if (baseline_id == "viewpoint" || baseline_id == "viewpoint_validation") {
+        return "viewpoint_validation";
+    }
+    if (baseline_id == "coupling" || baseline_id == "slice_coupling") {
+        return "slice_coupling";
+    }
+    return baseline_id;
+}
+
+std::string extract_clips_slot(const std::string & fact_text, const std::string & slot_name) {
+    const std::regex pattern("\\(" + slot_name + "\\s+(\"([^\"]*)\"|([^\\s\\)]+))\\)");
+    std::smatch match;
+    if (!std::regex_search(fact_text, match, pattern)) {
+        return "";
+    }
+    if (match.size() >= 3 && match[2].matched) {
+        return match[2].str();
+    }
+    if (match.size() >= 4 && match[3].matched) {
+        return match[3].str();
+    }
+    return "";
+}
+
+double extract_clips_slot_double(const std::string & fact_text, const std::string & slot_name, double fallback = 0.0) {
+    const std::string value = extract_clips_slot(fact_text, slot_name);
+    if (value.empty()) {
+        return fallback;
+    }
+    try {
+        return std::stod(value);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+int extract_clips_slot_int(const std::string & fact_text, const std::string & slot_name, int fallback = 0) {
+    const std::string value = extract_clips_slot(fact_text, slot_name);
+    if (value.empty()) {
+        return fallback;
+    }
+    try {
+        return std::stoi(value);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+bool clips_fact_is(const std::string & fact_text, const std::string & template_name) {
+    return fact_text.find("(" + template_name) != std::string::npos;
+}
+
+void persist_viewpoint_baseline_store(
+        const std::string & base_path,
+        const std::string & baseline_id,
+        const RagTraceContext & trace,
+        const std::vector<std::string> & assertions,
+        const RagClipsRunResult & run_result,
+        const json & evaluation) {
+    const std::string store_path = rag_storage_viewpoint_store_path(base_path);
+    if (store_path.empty()) {
+        return;
+    }
+
+    json store = load_rag_json_file(store_path);
+    if (!store.is_object()) {
+        store = json::object();
+    }
+    store["schema_version"] = 1;
+    store["record_model"] = "rag_viewpoint_store_v1";
+    store["index_name"] = base_path;
+    store["status"] = "baseline_updated";
+    if (!store.contains("viewpoint_candidates") || !store["viewpoint_candidates"].is_object()) {
+        store["viewpoint_candidates"] = json::object();
+    }
+    if (!store.contains("evidence_bindings") || !store["evidence_bindings"].is_object()) {
+        store["evidence_bindings"] = json::object();
+    }
+    if (!store.contains("viewpoint_decisions") || !store["viewpoint_decisions"].is_object()) {
+        store["viewpoint_decisions"] = json::object();
+    }
+    if (!store.contains("viewpoint_validations") || !store["viewpoint_validations"].is_object()) {
+        store["viewpoint_validations"] = json::object();
+    }
+    if (!store.contains("baseline_runs") || !store["baseline_runs"].is_object()) {
+        store["baseline_runs"] = json::object();
+    }
+
+    auto append_viewpoint_ref = [&](const std::string & viewpoint_id, const json & record) {
+        if (viewpoint_id.empty()) {
+            return;
+        }
+        rag_storage_append_jsonl_record(
+            rag_storage_viewpoint_index_path(base_path, viewpoint_id),
+            record);
+    };
+    json operations = json::array();
+
+    for (const auto & fact : assertions) {
+        if (clips_fact_is(fact, "viewpoint-candidate")) {
+            const std::string viewpoint_id = extract_clips_slot(fact, "viewpoint-id");
+            if (viewpoint_id.empty()) {
+                continue;
+            }
+            json record = {
+                {"record_model", "rag_viewpoint_candidate_v1"},
+                {"baseline_id", baseline_id},
+                {"request_id", trace.request_id},
+                {"trace_id", trace.trace_id},
+                {"query_id", trace.query_id},
+                {"viewpoint_id", viewpoint_id},
+                {"model_task_id", extract_clips_slot(fact, "model-task-id")},
+                {"source_slice_id", extract_clips_slot(fact, "source-slice-id")},
+                {"claim_text", extract_clips_slot(fact, "claim-text")},
+                {"claim_type", extract_clips_slot(fact, "claim-type")},
+                {"subject", extract_clips_slot(fact, "subject")},
+                {"predicate", extract_clips_slot(fact, "predicate")},
+                {"object", extract_clips_slot(fact, "object")},
+                {"confidence", extract_clips_slot_double(fact, "confidence")},
+                {"status", extract_clips_slot(fact, "status")},
+                {"raw_fact", fact},
+            };
+            store["viewpoint_candidates"][viewpoint_id] = record;
+            append_viewpoint_ref(viewpoint_id, record);
+            operations.push_back(rag_storage_make_backend_put(
+                "viewpoint",
+                "viewpoint:" + viewpoint_id,
+                record,
+                "rag_viewpoint_candidate_v1"));
+            const std::string source_slice_id = record.value("source_slice_id", "");
+            if (!source_slice_id.empty()) {
+                operations.push_back(rag_storage_make_backend_put(
+                    "viewpoint",
+                    "viewpoint_by_slice:" + source_slice_id + ":" + viewpoint_id,
+                    record,
+                    "rag_viewpoint_candidate_v1"));
+            }
+            operations.push_back(rag_storage_make_backend_put(
+                "viewpoint",
+                "viewpoint_by_trace:" + trace.trace_id + ":" + viewpoint_id,
+                record,
+                "rag_viewpoint_candidate_v1"));
+        } else if (clips_fact_is(fact, "evidence-binding")) {
+            const std::string viewpoint_id = extract_clips_slot(fact, "viewpoint-id");
+            if (viewpoint_id.empty()) {
+                continue;
+            }
+            json record = {
+                {"record_model", "rag_viewpoint_evidence_binding_v1"},
+                {"baseline_id", baseline_id},
+                {"request_id", trace.request_id},
+                {"trace_id", trace.trace_id},
+                {"query_id", trace.query_id},
+                {"viewpoint_id", viewpoint_id},
+                {"source_type", extract_clips_slot(fact, "source-type")},
+                {"source_id", extract_clips_slot(fact, "source-id")},
+                {"evidence_ref", extract_clips_slot(fact, "evidence-ref")},
+                {"evidence_hash", extract_clips_slot(fact, "evidence-hash")},
+                {"match_status", extract_clips_slot(fact, "match-status")},
+                {"status", extract_clips_slot(fact, "status")},
+                {"raw_fact", fact},
+            };
+            if (!store["evidence_bindings"].contains(viewpoint_id) || !store["evidence_bindings"][viewpoint_id].is_array()) {
+                store["evidence_bindings"][viewpoint_id] = json::array();
+            }
+            store["evidence_bindings"][viewpoint_id].push_back(record);
+            append_viewpoint_ref(viewpoint_id, record);
+            operations.push_back(rag_storage_make_backend_put(
+                "viewpoint",
+                "viewpoint:evidence:" + viewpoint_id + ":" + record.value("source_id", ""),
+                record,
+                "rag_viewpoint_evidence_binding_v1"));
+        }
+    }
+
+    for (const auto & fact : run_result.facts_after_run) {
+        if (clips_fact_is(fact, "viewpoint-decision")) {
+            const std::string viewpoint_id = extract_clips_slot(fact, "viewpoint-id");
+            if (viewpoint_id.empty()) {
+                continue;
+            }
+            json record = {
+                {"record_model", "rag_viewpoint_decision_v1"},
+                {"baseline_id", baseline_id},
+                {"request_id", trace.request_id},
+                {"trace_id", trace.trace_id},
+                {"query_id", trace.query_id},
+                {"viewpoint_id", viewpoint_id},
+                {"decision", extract_clips_slot(fact, "decision")},
+                {"reason", extract_clips_slot(fact, "reason")},
+                {"final_confidence", extract_clips_slot_double(fact, "final-confidence")},
+                {"action", extract_clips_slot(fact, "action")},
+                {"status", extract_clips_slot(fact, "status")},
+                {"raw_fact", fact},
+            };
+            store["viewpoint_decisions"][viewpoint_id] = record;
+            append_viewpoint_ref(viewpoint_id, record);
+            operations.push_back(rag_storage_make_backend_put(
+                "viewpoint",
+                "viewpoint:decision:" + viewpoint_id,
+                record,
+                "rag_viewpoint_decision_v1"));
+        } else if (clips_fact_is(fact, "viewpoint-validation")) {
+            const std::string viewpoint_id = extract_clips_slot(fact, "viewpoint-id");
+            if (viewpoint_id.empty()) {
+                continue;
+            }
+            json record = {
+                {"record_model", "rag_viewpoint_validation_v1"},
+                {"baseline_id", baseline_id},
+                {"request_id", trace.request_id},
+                {"trace_id", trace.trace_id},
+                {"query_id", trace.query_id},
+                {"viewpoint_id", viewpoint_id},
+                {"validation_status", extract_clips_slot(fact, "validation-status")},
+                {"reject_reason", extract_clips_slot(fact, "reject-reason")},
+                {"raw_fact", fact},
+            };
+            store["viewpoint_validations"][viewpoint_id] = record;
+            append_viewpoint_ref(viewpoint_id, record);
+            operations.push_back(rag_storage_make_backend_put(
+                "viewpoint",
+                "viewpoint:validation:" + viewpoint_id,
+                record,
+                "rag_viewpoint_validation_v1"));
+        }
+    }
+
+    store["viewpoint_count"] = static_cast<int>(store["viewpoint_candidates"].size());
+    store["baseline_runs"][trace.trace_id] = {
+        {"record_model", "rag_viewpoint_baseline_run_ref_v1"},
+        {"baseline_id", baseline_id},
+        {"request_id", trace.request_id},
+        {"trace_id", trace.trace_id},
+        {"query_id", trace.query_id},
+        {"pass", evaluation.value("pass", false)},
+        {"pass_count", evaluation.value("pass_count", 0)},
+        {"fail_count", evaluation.value("fail_count", 0)},
+    };
+    rag_storage_write_json_file(store_path, store);
+    rag_storage_append_backend_write_batch(
+        base_path,
+        "viewpoint_baseline_" + rag_storage_sanitize_token(trace.trace_id),
+        operations);
+}
+
+void persist_coupling_baseline_store(
+        const std::string & base_path,
+        const std::string & baseline_id,
+        const RagTraceContext & trace,
+        const std::vector<std::string> & assertions,
+        const RagClipsRunResult & run_result,
+        const json & evaluation) {
+    const std::string graph_path = rag_storage_coupling_graph_path(base_path);
+    if (graph_path.empty()) {
+        return;
+    }
+
+    json graph = load_rag_json_file(graph_path);
+    if (!graph.is_object()) {
+        graph = json::object();
+    }
+    graph["schema_version"] = 1;
+    graph["record_model"] = "rag_slice_coupling_graph_v1";
+    graph["index_name"] = base_path;
+    graph["status"] = "baseline_updated";
+    if (!graph.contains("semantic_slices") || !graph["semantic_slices"].is_object()) {
+        graph["semantic_slices"] = json::object();
+    }
+    if (!graph.contains("coupling_candidates") || !graph["coupling_candidates"].is_object()) {
+        graph["coupling_candidates"] = json::object();
+    }
+    if (!graph.contains("coupling_decisions") || !graph["coupling_decisions"].is_object()) {
+        graph["coupling_decisions"] = json::object();
+    }
+    if (!graph.contains("slice_edges") || !graph["slice_edges"].is_object()) {
+        graph["slice_edges"] = json::object();
+    }
+    if (!graph.contains("baseline_runs") || !graph["baseline_runs"].is_object()) {
+        graph["baseline_runs"] = json::object();
+    }
+
+    auto append_slice_ref = [&](const std::string & slice_id, const json & record) {
+        if (slice_id.empty()) {
+            return;
+        }
+        rag_storage_append_jsonl_record(
+            rag_storage_coupling_slice_index_path(base_path, slice_id),
+            record);
+    };
+    json operations = json::array();
+
+    for (const auto & fact : assertions) {
+        if (clips_fact_is(fact, "semantic-slice")) {
+            const std::string slice_id = extract_clips_slot(fact, "slice-id");
+            if (slice_id.empty()) {
+                continue;
+            }
+            json record = {
+                {"record_model", "rag_semantic_slice_v1"},
+                {"baseline_id", baseline_id},
+                {"request_id", trace.request_id},
+                {"trace_id", trace.trace_id},
+                {"query_id", trace.query_id},
+                {"slice_id", slice_id},
+                {"file_id", extract_clips_slot(fact, "file-id")},
+                {"source_uri", extract_clips_slot(fact, "source-uri")},
+                {"start_line", extract_clips_slot_int(fact, "start-line")},
+                {"end_line", extract_clips_slot_int(fact, "end-line")},
+                {"text_hash", extract_clips_slot(fact, "text-hash")},
+                {"language", extract_clips_slot(fact, "language")},
+                {"symbol_scope", extract_clips_slot(fact, "symbol-scope")},
+                {"status", extract_clips_slot(fact, "status")},
+                {"raw_fact", fact},
+            };
+            graph["semantic_slices"][slice_id] = record;
+            append_slice_ref(slice_id, record);
+            operations.push_back(rag_storage_make_backend_put(
+                "coupling",
+                "semantic_slice:" + slice_id,
+                record,
+                "rag_semantic_slice_v1"));
+        } else if (clips_fact_is(fact, "coupling-candidate")) {
+            const std::string candidate_id = extract_clips_slot(fact, "candidate-id");
+            if (candidate_id.empty()) {
+                continue;
+            }
+            json record = {
+                {"record_model", "rag_coupling_candidate_v1"},
+                {"baseline_id", baseline_id},
+                {"request_id", trace.request_id},
+                {"trace_id", trace.trace_id},
+                {"query_id", trace.query_id},
+                {"candidate_id", candidate_id},
+                {"from_slice", extract_clips_slot(fact, "from-slice")},
+                {"to_slice", extract_clips_slot(fact, "to-slice")},
+                {"candidate_type", extract_clips_slot(fact, "candidate-type")},
+                {"score", extract_clips_slot_double(fact, "score")},
+                {"source", extract_clips_slot(fact, "source")},
+                {"status", extract_clips_slot(fact, "status")},
+                {"raw_fact", fact},
+            };
+            graph["coupling_candidates"][candidate_id] = record;
+            append_slice_ref(record.value("from_slice", ""), record);
+            append_slice_ref(record.value("to_slice", ""), record);
+            operations.push_back(rag_storage_make_backend_put(
+                "coupling",
+                "coupling_candidate:" + candidate_id,
+                record,
+                "rag_coupling_candidate_v1"));
+        }
+    }
+
+    for (const auto & fact : run_result.facts_after_run) {
+        if (clips_fact_is(fact, "coupling-decision")) {
+            const std::string candidate_id = extract_clips_slot(fact, "candidate-id");
+            if (candidate_id.empty()) {
+                continue;
+            }
+            json record = {
+                {"record_model", "rag_coupling_decision_v1"},
+                {"baseline_id", baseline_id},
+                {"request_id", trace.request_id},
+                {"trace_id", trace.trace_id},
+                {"query_id", trace.query_id},
+                {"candidate_id", candidate_id},
+                {"decision", extract_clips_slot(fact, "decision")},
+                {"reason", extract_clips_slot(fact, "reason")},
+                {"final_edge_type", extract_clips_slot(fact, "final-edge-type")},
+                {"final_confidence", extract_clips_slot_double(fact, "final-confidence")},
+                {"status", extract_clips_slot(fact, "status")},
+                {"raw_fact", fact},
+            };
+            graph["coupling_decisions"][candidate_id] = record;
+            const json candidate = graph["coupling_candidates"].value(candidate_id, json::object());
+            append_slice_ref(candidate.value("from_slice", ""), record);
+            append_slice_ref(candidate.value("to_slice", ""), record);
+            operations.push_back(rag_storage_make_backend_put(
+                "coupling",
+                "coupling_decision:" + candidate_id,
+                record,
+                "rag_coupling_decision_v1"));
+        } else if (clips_fact_is(fact, "slice-edge")) {
+            const std::string edge_id = extract_clips_slot(fact, "edge-id");
+            if (edge_id.empty()) {
+                continue;
+            }
+            json record = {
+                {"record_model", "rag_slice_edge_v1"},
+                {"baseline_id", baseline_id},
+                {"request_id", trace.request_id},
+                {"trace_id", trace.trace_id},
+                {"query_id", trace.query_id},
+                {"edge_id", edge_id},
+                {"from_slice", extract_clips_slot(fact, "from-slice")},
+                {"to_slice", extract_clips_slot(fact, "to-slice")},
+                {"edge_type", extract_clips_slot(fact, "edge-type")},
+                {"confidence", extract_clips_slot_double(fact, "confidence")},
+                {"source", extract_clips_slot(fact, "source")},
+                {"evidence_ref_a", extract_clips_slot(fact, "evidence-ref-a")},
+                {"evidence_ref_b", extract_clips_slot(fact, "evidence-ref-b")},
+                {"status", extract_clips_slot(fact, "status")},
+                {"raw_fact", fact},
+            };
+            graph["slice_edges"][edge_id] = record;
+            append_slice_ref(record.value("from_slice", ""), record);
+            append_slice_ref(record.value("to_slice", ""), record);
+            operations.push_back(rag_storage_make_backend_put(
+                "coupling",
+                "slice_edge:" + edge_id,
+                record,
+                "rag_slice_edge_v1"));
+            for (const std::string slice_id : {
+                     record.value("from_slice", std::string()),
+                     record.value("to_slice", std::string())}) {
+                if (!slice_id.empty()) {
+                    operations.push_back(rag_storage_make_backend_put(
+                        "coupling",
+                        "coupling_by_slice:" + slice_id + ":" + edge_id,
+                        record,
+                        "rag_slice_edge_v1"));
+                }
+            }
+        }
+    }
+
+    graph["candidate_count"] = static_cast<int>(graph["coupling_candidates"].size());
+    graph["edge_count"] = static_cast<int>(graph["slice_edges"].size());
+    graph["baseline_runs"][trace.trace_id] = {
+        {"record_model", "rag_coupling_baseline_run_ref_v1"},
+        {"baseline_id", baseline_id},
+        {"request_id", trace.request_id},
+        {"trace_id", trace.trace_id},
+        {"query_id", trace.query_id},
+        {"pass", evaluation.value("pass", false)},
+        {"pass_count", evaluation.value("pass_count", 0)},
+        {"fail_count", evaluation.value("fail_count", 0)},
+    };
+    rag_storage_write_json_file(graph_path, graph);
+    rag_storage_append_backend_write_batch(
+        base_path,
+        "coupling_baseline_" + rag_storage_sanitize_token(trace.trace_id),
+        operations);
 }
 
 std::string format_rag_source_label(const json & metadata) {
@@ -114,6 +740,8 @@ json build_clips_store_refs(
         {"run_kind", run_kind},
         {"clips_runs_log_path", rag_storage_clips_runs_log_path(base_path)},
         {"run_snapshot_path", rag_storage_clips_run_snapshot_path(base_path, run_kind, trace_id)},
+        {"fact_page_path", rag_storage_clips_fact_page_path(base_path, run_kind, trace_id)},
+        {"knowledge_nodes_path", rag_storage_knowledge_nodes_path(base_path, run_kind, trace_id)},
         {"query_index_path", rag_storage_clips_query_index_path(base_path, query_id)},
         {"slice_index_refs", std::move(slice_index_refs)},
     };
@@ -220,6 +848,272 @@ void persist_clips_run_sidecar(
             }
         }
 
+        const std::string fact_page_path =
+            rag_storage_clips_fact_page_path(base_path, run_kind, trace_id);
+        if (!fact_page_path.empty()) {
+            json fact_refs = json::array();
+            json facts = json::array();
+            const std::string run_id = run_kind + ":" + trace_id;
+            const std::string run_key = "clips:run:" + run_id;
+
+            auto append_fact = [&](const std::string & fact_type, size_t ordinal, const std::string & fact_text) {
+                const std::string fact_id =
+                    (fact_type == "input_assertion" ? "INPUT-" : "OUTPUT-") + std::to_string(ordinal);
+                const std::string fact_key = "clips:fact:" + trace_id + ":" + fact_id;
+                facts.push_back(json{
+                    {"record_model", "rag_clips_fact_v1"},
+                    {"run_kind", run_kind},
+                    {"run_id", run_id},
+                    {"request_id", request_id},
+                    {"trace_id", trace_id},
+                    {"query_id", query_id},
+                    {"fact_id", fact_id},
+                    {"fact_key", fact_key},
+                    {"fact_type", fact_type},
+                    {"ordinal", static_cast<int>(ordinal)},
+                    {"fact_text", fact_text},
+                });
+                fact_refs.push_back(json{
+                    {"fact_id", fact_id},
+                    {"fact_key", fact_key},
+                    {"fact_type", fact_type},
+                    {"ordinal", static_cast<int>(ordinal)},
+                });
+            };
+
+            for (size_t i = 0; i < assertions.size(); ++i) {
+                append_fact("input_assertion", i, assertions[i]);
+            }
+            for (size_t i = 0; i < run_result.admission_decisions.size(); ++i) {
+                append_fact("admission_decision", i, run_result.admission_decisions[i]);
+            }
+
+            rag_storage_write_json_file(
+                fact_page_path,
+                json{
+                    {"record_model", "rag_clips_fact_page_v1"},
+                    {"schema_version", 1},
+                    {"run_kind", run_kind},
+                    {"run_id", run_id},
+                    {"request_id", request_id},
+                    {"trace_id", trace_id},
+                    {"query_id", query_id},
+                    {"page_id", "PAGE-" + rag_storage_sanitize_token(run_kind) + "-" +
+                        rag_storage_sanitize_token(trace_id)},
+                    {"input_fact_count", static_cast<int>(assertions.size())},
+                    {"output_fact_count", static_cast<int>(run_result.admission_decisions.size())},
+                    {"fact_count", static_cast<int>(facts.size())},
+                    {"keys", {
+                        {"input_facts", run_key + ":input_facts"},
+                        {"output_facts", run_key + ":output_facts"},
+                    }},
+                    {"fact_refs", std::move(fact_refs)},
+                    {"facts", std::move(facts)},
+                });
+        }
+
+        const std::string knowledge_nodes_path =
+            rag_storage_knowledge_nodes_path(base_path, run_kind, trace_id);
+        if (!knowledge_nodes_path.empty()) {
+            json nodes = json::array();
+            json node_refs = json::array();
+            json slice_links = json::array();
+            json relations = json::array();
+            json risks = json::array();
+            json records = json::object();
+            std::unordered_map<std::string, json> decision_by_slice_id;
+
+            if (admission_report.is_array()) {
+                for (const auto & item : admission_report) {
+                    if (item.is_object()) {
+                        const std::string slice_id = item.value("slice_id", "");
+                        if (!slice_id.empty()) {
+                            decision_by_slice_id[slice_id] = item;
+                        }
+                    }
+                }
+            }
+
+            for (const auto & node : bundle.nodes) {
+                const std::string node_key = "node:" + node.node_id;
+                json node_record = {
+                    {"record_model", "rag_knowledge_node_v1"},
+                    {"run_kind", run_kind},
+                    {"request_id", request_id},
+                    {"trace_id", trace_id},
+                    {"query_id", query_id},
+                    {"node_id", node.node_id},
+                    {"node_key", node_key},
+                    {"parent_id", node.parent_id},
+                    {"anchor_level", node.anchor_level},
+                    {"is_immutable", node.is_immutable},
+                    {"node_type", node.node_type},
+                    {"lifecycle", node.lifecycle},
+                    {"domain_name", node.domain_name},
+                    {"concept_name", node.concept_name},
+                    {"core_definition", node.core_definition},
+                };
+                nodes.push_back(node_record);
+                records[node_key] = node_record;
+                node_refs.push_back(json{
+                    {"node_id", node.node_id},
+                    {"node_key", node_key},
+                    {"index_path", rag_storage_knowledge_node_index_path(base_path, node.node_id)},
+                });
+                rag_storage_append_jsonl_record(
+                    rag_storage_knowledge_node_index_path(base_path, node.node_id),
+                    json{
+                        {"record_model", "rag_knowledge_node_ref_v1"},
+                        {"run_kind", run_kind},
+                        {"request_id", request_id},
+                        {"trace_id", trace_id},
+                        {"query_id", query_id},
+                        {"node_id", node.node_id},
+                        {"node_key", node_key},
+                        {"knowledge_nodes_path", knowledge_nodes_path},
+                    });
+            }
+
+            for (const auto & link : bundle.slice_links) {
+                const std::string slice_key = "node_by_slice:" + link.slice_id + ":" + link.bind_node_id;
+                json decision = decision_by_slice_id.count(link.slice_id) > 0 ?
+                    decision_by_slice_id[link.slice_id] : json::object();
+                json link_record = {
+                    {"record_model", "rag_knowledge_slice_link_v1"},
+                    {"run_kind", run_kind},
+                    {"request_id", request_id},
+                    {"trace_id", trace_id},
+                    {"query_id", query_id},
+                    {"slice_id", link.slice_id},
+                    {"node_id", link.bind_node_id},
+                    {"link_id", link.link_id},
+                    {"slice_key", slice_key},
+                    {"info_weight", link.info_weight},
+                    {"truth_status", link.truth_status},
+                    {"source_type", link.source_type},
+                    {"provider_id", link.provider_id},
+                    {"evidence_ref", link.evidence_ref},
+                    {"body_quality", link.body_quality},
+                    {"decision", decision.value("decision", "")},
+                    {"reason", decision.value("reason", "")},
+                    {"rule_id", decision.value("rule_id", "")},
+                    {"next_action", decision.value("next_action", "")},
+                };
+                slice_links.push_back(link_record);
+                records[slice_key] = link_record;
+                rag_storage_append_jsonl_record(
+                    rag_storage_knowledge_slice_index_path(base_path, link.slice_id),
+                    json{
+                        {"record_model", "rag_knowledge_slice_ref_v1"},
+                        {"run_kind", run_kind},
+                        {"request_id", request_id},
+                        {"trace_id", trace_id},
+                        {"query_id", query_id},
+                        {"slice_id", link.slice_id},
+                        {"node_id", link.bind_node_id},
+                        {"slice_key", slice_key},
+                        {"knowledge_nodes_path", knowledge_nodes_path},
+                    });
+
+                const std::string decision_value = decision.value("decision", "");
+                if (!decision_value.empty() && decision_value != "allow") {
+                    const std::string risk_id = "RISK-" + link.slice_id + "-" + decision_value;
+                    json risk_record = {
+                        {"record_model", "rag_knowledge_risk_v1"},
+                        {"risk_id", risk_id},
+                        {"risk_key", "risk:" + risk_id},
+                        {"slice_id", link.slice_id},
+                        {"node_id", link.bind_node_id},
+                        {"decision", decision_value},
+                        {"reason", decision.value("reason", "")},
+                        {"rule_id", decision.value("rule_id", "")},
+                    };
+                    risks.push_back(risk_record);
+                    records["risk:" + risk_id] = risk_record;
+                }
+            }
+
+            for (const auto & edge : bundle.meta_graph.edges) {
+                const std::string relation_key = "relation:" + edge.edge_id;
+                json relation_record = {
+                    {"record_model", "rag_knowledge_relation_v1"},
+                    {"relation_id", edge.edge_id},
+                    {"relation_key", relation_key},
+                    {"edge_type", edge.edge_type},
+                    {"from_node_id", edge.from_node_id},
+                    {"to_node_id", edge.to_node_id},
+                    {"relation", edge.relation},
+                };
+                relations.push_back(relation_record);
+                records[relation_key] = relation_record;
+            }
+
+            const json audit_node_refs = node_refs;
+            json audit_slice_refs = json::array();
+            json audit_supporting_slice_ids = json::array();
+            std::unordered_set<std::string> audit_seen_slice_ids;
+            for (const auto & link : bundle.slice_links) {
+                if (link.slice_id.empty()) {
+                    continue;
+                }
+                audit_slice_refs.push_back(json{
+                    {"slice_id", link.slice_id},
+                    {"node_id", link.bind_node_id},
+                    {"link_id", link.link_id},
+                    {"index_path", rag_storage_knowledge_slice_index_path(base_path, link.slice_id)},
+                });
+                if (audit_seen_slice_ids.insert(link.slice_id).second) {
+                    audit_supporting_slice_ids.push_back(link.slice_id);
+                }
+            }
+            const int audit_slice_link_count = static_cast<int>(slice_links.size());
+            const int audit_relation_count = static_cast<int>(relations.size());
+            const int audit_risk_count = static_cast<int>(risks.size());
+
+            rag_storage_write_json_file(
+                knowledge_nodes_path,
+                json{
+                    {"record_model", "rag_knowledge_store_v1"},
+                    {"schema_version", 1},
+                    {"run_kind", run_kind},
+                    {"request_id", request_id},
+                    {"trace_id", trace_id},
+                    {"query_id", query_id},
+                    {"query", query_text},
+                    {"retrieval_mode", retrieval_mode},
+                    {"route", route},
+                    {"dominant_decision", dominant_decision},
+                    {"node_count", static_cast<int>(nodes.size())},
+                    {"slice_link_count", static_cast<int>(slice_links.size())},
+                    {"relation_count", static_cast<int>(relations.size())},
+                    {"risk_count", static_cast<int>(risks.size())},
+                    {"node_refs", std::move(node_refs)},
+                    {"nodes", std::move(nodes)},
+                    {"slice_links", std::move(slice_links)},
+                    {"relations", std::move(relations)},
+                    {"risks", std::move(risks)},
+                    {"records", std::move(records)},
+                });
+
+            server_trace_registry::append_event(
+                trace_id,
+                "knowledge_node_persist",
+                json{
+                    {"record_model", "rag_knowledge_persist_event_v1"},
+                    {"request_id", request_id},
+                    {"trace_id", trace_id},
+                    {"query_id", query_id},
+                    {"run_kind", run_kind},
+                    {"knowledge_nodes_path", knowledge_nodes_path},
+                    {"node_refs", audit_node_refs},
+                    {"slice_refs", audit_slice_refs},
+                    {"supporting_slice_ids", audit_supporting_slice_ids},
+                    {"slice_link_count", audit_slice_link_count},
+                    {"relation_count", audit_relation_count},
+                    {"risk_count", audit_risk_count},
+                });
+        }
+
         const std::string snapshot_path =
             rag_storage_clips_run_snapshot_path(base_path, run_kind, trace_id);
         if (!snapshot_path.empty()) {
@@ -232,6 +1126,8 @@ void persist_clips_run_sidecar(
                 {"bundle_summary", bundle_summary},
                 {"loaded_rule_files", run_result.loaded_rule_files},
                 {"assertions", assertions},
+                {"activations_before_run", run_result.activations_before_run},
+                {"facts_after_run", run_result.facts_after_run},
                 {"admission_decisions", run_result.admission_decisions},
                 {"response", payload},
             };
@@ -950,6 +1846,116 @@ json RagServerRuntime::build_clips_manifest_payload() const {
 
 json RagServerRuntime::build_clips_run_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const {
     const RagTraceContext trace = build_trace_context(body, "/rag/clips/run", query, top_k);
+    std::string baseline_id = body.value("baseline_id", body.value("baseline", ""));
+    if (baseline_id.empty() && query.rfind("baseline:", 0) == 0) {
+        baseline_id = query;
+    }
+    baseline_id = normalize_clips_baseline_id(baseline_id);
+    if (!baseline_id.empty()) {
+        const bool is_viewpoint = baseline_id == "viewpoint_validation";
+        const bool is_coupling = baseline_id == "slice_coupling";
+        const std::string baseline_path = is_viewpoint
+            ? rag_storage_viewpoint_baseline_path(params_base_.rag_index_path)
+            : is_coupling
+                ? rag_storage_coupling_baseline_path(params_base_.rag_index_path)
+                : "";
+        if (baseline_path.empty()) {
+            return json{
+                {"request_id", trace.request_id},
+                {"trace_id", trace.trace_id},
+                {"query_id", trace.query_id},
+                {"request_context", build_trace_payload(trace, enabled(), params_base_.rag_clips_enable)},
+                {"query", query},
+                {"baseline_id", baseline_id},
+                {"ok", false},
+                {"message", "Unknown CLIPS baseline_id"},
+                {"allowed_baseline_ids", json::array({"viewpoint_validation", "slice_coupling"})},
+            };
+        }
+
+        const json fixture = load_rag_json_file(baseline_path);
+        const json baseline = fixture.value("baseline", json::object());
+        const auto assertions = json_string_array(baseline.value("input_facts", json::array()));
+        const RagClipsFactBundle empty_bundle;
+        const RagClipsRunResult run_result = RunRagClipsRules(params_base_, empty_bundle, assertions);
+        const json evaluation = is_viewpoint
+            ? evaluate_viewpoint_baseline(run_result.facts_after_run)
+            : evaluate_coupling_baseline(run_result.facts_after_run);
+        if (is_viewpoint) {
+            persist_viewpoint_baseline_store(
+                params_base_.rag_index_path,
+                baseline_id,
+                trace,
+                assertions,
+                run_result,
+                evaluation);
+        } else {
+            persist_coupling_baseline_store(
+                params_base_.rag_index_path,
+                baseline_id,
+                trace,
+                assertions,
+                run_result,
+                evaluation);
+        }
+
+        json payload = json{
+            {"request_id", trace.request_id},
+            {"trace_id", trace.trace_id},
+            {"query_id", trace.query_id},
+            {"request_context", build_trace_payload(trace, enabled(), params_base_.rag_clips_enable)},
+            {"query", query},
+            {"retrieval_mode", "baseline_fixture"},
+            {"baseline_id", baseline_id},
+            {"baseline_path", baseline_path},
+            {"record_model", "rag_clips_baseline_run_v1"},
+            {"backend", run_result.backend},
+            {"ok", run_result.ok && evaluation.value("pass", false)},
+            {"message", run_result.ok ? "CLIPS baseline executed" : run_result.message},
+            {"rules_dir", run_result.rules_dir},
+            {"manifest_path", run_result.manifest_path},
+            {"rule_set_id", run_result.rule_set_id},
+            {"input_fact_count", static_cast<int>(assertions.size())},
+            {"expected_decisions", baseline.value("expected_decisions", json::array())},
+            {"facts_asserted", run_result.facts_asserted},
+            {"facts_after_run_count", run_result.facts_after_run_count},
+            {"activations_before_run_count", run_result.activations_before_run_count},
+            {"rules_fired", run_result.rules_fired},
+            {"baseline_evaluation", evaluation},
+            {"captured_facts", {
+                {"viewpoint_decisions", build_clips_fact_subset(run_result.facts_after_run, "viewpoint-decision")},
+                {"viewpoint_validations", build_clips_fact_subset(run_result.facts_after_run, "viewpoint-validation")},
+                {"coupling_decisions", build_clips_fact_subset(run_result.facts_after_run, "coupling-decision")},
+                {"slice_edges", build_clips_fact_subset(run_result.facts_after_run, "slice-edge")},
+                {"semantic_slices", build_clips_fact_subset(run_result.facts_after_run, "semantic-slice")},
+            }},
+            {"runner_diagnostics", {
+                {"loaded_rule_file_count", static_cast<int>(run_result.loaded_rule_files.size())},
+                {"activation_count", run_result.activations_before_run_count},
+                {"fact_count_after_run", run_result.facts_after_run_count},
+                {"rules_fired", run_result.rules_fired},
+                {"facts_rejected_by_limit", run_result.facts_rejected_by_limit},
+            }},
+        };
+
+        payload["store_refs"] = build_clips_store_refs(
+            params_base_.rag_index_path,
+            "clips_baseline_" + baseline_id,
+            trace.trace_id,
+            trace.query_id,
+            json::array());
+
+        persist_clips_run_sidecar(
+            params_base_.rag_index_path,
+            "clips_baseline_" + baseline_id,
+            empty_bundle,
+            assertions,
+            run_result,
+            payload);
+
+        return payload;
+    }
+
     try {
         LOG_INF("%s: building CLIPS run payload query='%s' top_k=%d timeout_ms=%d\n",
             __func__, query.c_str(), top_k, timeout_ms);
@@ -1277,6 +2283,33 @@ json RagServerRuntime::build_status_payload() const {
         raw_slice_count = (int) rag_engine_->get_raw_slice_count();
     }
 
+    const json kv_snapshot = read_json_object_from_file(rag_storage_kv_snapshot_path(params_base_.rag_index_path));
+    const json rocksdb_status_file = read_json_object_from_file(rag_storage_rocksdb_status_path(params_base_.rag_index_path));
+    json rocksdb_mirror = rocksdb_status_file.value("last_mirror", json::object());
+    if (rocksdb_mirror.empty()) {
+        rocksdb_mirror = kv_snapshot.value("last_rocksdb_mirror", json::object());
+    }
+    if (!rocksdb_mirror.is_object()) {
+        rocksdb_mirror = json::object();
+    }
+    if (rocksdb_mirror.empty()) {
+        rocksdb_mirror = {
+            {"record_model", "rag_rocksdb_mirror_status_v1"},
+#if defined(LLAMA_SERVER_RAG_ROCKSDB_BACKEND)
+            {"enabled", true},
+            {"attempted", false},
+            {"applied", false},
+            {"reason", "no_write_batch_seen"},
+#else
+            {"enabled", false},
+            {"attempted", false},
+            {"applied", false},
+            {"reason", "LLAMA_SERVER_RAG_ROCKSDB_BACKEND not enabled"},
+#endif
+            {"database_path", rag_storage_rocksdb_path(params_base_.rag_index_path)},
+        };
+    }
+
     return json{
         {"enabled", enabled()},
         {"ready", ready()},
@@ -1292,8 +2325,28 @@ json RagServerRuntime::build_status_payload() const {
         {"storage", json{
             {"backend", "file_sidecar"},
             {"manifest_path", rag_storage_manifest_path(params_base_.rag_index_path)},
+            {"manual_test_plan_path", rag_storage_manual_test_plan_path(params_base_.rag_index_path)},
             {"vector_map_path", rag_storage_vector_map_path(params_base_.rag_index_path)},
             {"raw_slices_path", rag_storage_raw_slices_path(params_base_.rag_index_path)},
+            {"slice_db_path", rag_storage_slice_db_path(params_base_.rag_index_path)},
+            {"slice_record_pattern", params_base_.rag_index_path + ".slice.{slice_id}.json"},
+            {"db_contract_path", rag_storage_db_contract_path(params_base_.rag_index_path)},
+            {"rocksdb_path", rag_storage_rocksdb_path(params_base_.rag_index_path)},
+            {"rocksdb_status_path", rag_storage_rocksdb_status_path(params_base_.rag_index_path)},
+            {"sqlite_path", rag_storage_sqlite_path(params_base_.rag_index_path)},
+            {"kv_journal_path", rag_storage_kv_journal_path(params_base_.rag_index_path)},
+            {"kv_snapshot_path", rag_storage_kv_snapshot_path(params_base_.rag_index_path)},
+            {"viewpoint_store_path", rag_storage_viewpoint_store_path(params_base_.rag_index_path)},
+            {"viewpoint_index_pattern", params_base_.rag_index_path + ".viewpoint.{viewpoint_id}.jsonl"},
+            {"viewpoint_baseline_path", rag_storage_viewpoint_baseline_path(params_base_.rag_index_path)},
+            {"coupling_graph_path", rag_storage_coupling_graph_path(params_base_.rag_index_path)},
+            {"coupling_slice_index_pattern", params_base_.rag_index_path + ".coupling_slice.{slice_id}.jsonl"},
+            {"coupling_baseline_path", rag_storage_coupling_baseline_path(params_base_.rag_index_path)},
+            {"database_backends", json{
+                {"active", "file_sidecar"},
+                {"rocksdb", rocksdb_mirror},
+                {"sqlite", "contract_only"},
+            }},
             {"clips_runs_log_path", rag_storage_clips_runs_log_path(params_base_.rag_index_path)},
         }},
         {"last_job_kind", last_job_kind},

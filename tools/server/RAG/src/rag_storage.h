@@ -29,10 +29,29 @@ std::string rag_storage_sanitize_token(const std::string & value);
 
 std::string rag_storage_vector_map_path(const std::string & base_path);
 std::string rag_storage_raw_slices_path(const std::string & base_path);
+std::string rag_storage_slice_db_path(const std::string & base_path);
+std::string rag_storage_slice_record_path(const std::string & base_path, const std::string & slice_id);
+std::string rag_storage_db_contract_path(const std::string & base_path);
+std::string rag_storage_rocksdb_path(const std::string & base_path);
+std::string rag_storage_rocksdb_status_path(const std::string & base_path);
+std::string rag_storage_sqlite_path(const std::string & base_path);
+std::string rag_storage_kv_journal_path(const std::string & base_path);
+std::string rag_storage_kv_snapshot_path(const std::string & base_path);
+std::string rag_storage_viewpoint_store_path(const std::string & base_path);
+std::string rag_storage_viewpoint_index_path(const std::string & base_path, const std::string & viewpoint_id);
+std::string rag_storage_viewpoint_baseline_path(const std::string & base_path);
+std::string rag_storage_coupling_graph_path(const std::string & base_path);
+std::string rag_storage_coupling_slice_index_path(const std::string & base_path, const std::string & slice_id);
+std::string rag_storage_coupling_baseline_path(const std::string & base_path);
 std::string rag_storage_manifest_path(const std::string & base_path);
+std::string rag_storage_manual_test_plan_path(const std::string & base_path);
 
 std::string rag_storage_clips_runs_log_path(const std::string & base_path);
 std::string rag_storage_clips_run_snapshot_path(
+    const std::string & base_path,
+    const std::string & run_kind,
+    const std::string & trace_id);
+std::string rag_storage_clips_fact_page_path(
     const std::string & base_path,
     const std::string & run_kind,
     const std::string & trace_id);
@@ -42,9 +61,28 @@ std::string rag_storage_clips_query_index_path(
 std::string rag_storage_clips_slice_index_path(
     const std::string & base_path,
     const std::string & slice_id);
+std::string rag_storage_knowledge_nodes_path(
+    const std::string & base_path,
+    const std::string & run_kind,
+    const std::string & trace_id);
+std::string rag_storage_knowledge_node_index_path(
+    const std::string & base_path,
+    const std::string & node_id);
+std::string rag_storage_knowledge_slice_index_path(
+    const std::string & base_path,
+    const std::string & slice_id);
 
 void rag_storage_append_jsonl_record(const std::string & path, const rag_storage_json & record);
 void rag_storage_write_json_file(const std::string & path, const rag_storage_json & value);
+rag_storage_json rag_storage_make_backend_put(
+    const std::string & column_family,
+    const std::string & key,
+    const rag_storage_json & value,
+    const std::string & record_model);
+void rag_storage_append_backend_write_batch(
+    const std::string & base_path,
+    const std::string & batch_id,
+    const rag_storage_json & operations);
 
 class RagFileStorage {
 public:

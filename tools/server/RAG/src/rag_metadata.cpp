@@ -208,7 +208,7 @@ rag_json rag_build_chunk_metadata(
     const std::string slice_seed = source_uri + "|" + std::to_string(start_line) + "|" + std::to_string(end_line) + "|" + metadata["text_hash"].get<std::string>();
     metadata["slice_id"] = rag_make_stable_id("SLICE", slice_seed);
     metadata["chunk_id"] = source_uri.empty()
-        ? metadata["slice_id"]
+        ? metadata["slice_id"].get<std::string>()
         : source_uri + ":" + std::to_string(start_line) + "-" + std::to_string(end_line);
 
     return metadata;

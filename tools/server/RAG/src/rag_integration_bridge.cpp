@@ -222,13 +222,18 @@ RagBridgeResult RagIntegrationBridge::build_clips_run_response(const json & body
     }
 
     const std::string query = body.value("query", RagServerRuntime::extract_query_from_body(body));
-    if (query.empty()) {
+    const std::string baseline_id = body.value("baseline_id", body.value("baseline", ""));
+    if (query.empty() && baseline_id.empty()) {
         return {false, RagBridgeError::invalid_request, "\"query\" must be provided", json::object()};
     }
 
     RagBridgeResult result;
     result.ok = true;
-    result.payload = runtime_->build_clips_run_payload(body, query, resolve_top_k(body), params_.rag_search_timeout_ms);
+    result.payload = runtime_->build_clips_run_payload(
+        body,
+        query.empty() ? ("baseline:" + baseline_id) : query,
+        resolve_top_k(body),
+        params_.rag_search_timeout_ms);
     return result;
 }
 

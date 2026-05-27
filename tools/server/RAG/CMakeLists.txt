@@ -4,6 +4,7 @@ set(LLAMA_SERVER_RAG_SRC_ROOT ${LLAMA_SERVER_RAG_ROOT}/src)
 option(LLAMA_SERVER_RAG_ENABLE "Build the isolated RAG module under tools/server/RAG" ON)
 option(LLAMA_SERVER_RAG_ENABLE_CLIPS "Build the local CLIPS core bridge for the isolated RAG module" OFF)
 option(LLAMA_SERVER_RAG_ENABLE_CXPARSER_BRIDGE "Build the cxparser-facing explain bridge inside tools/server/RAG" OFF)
+option(LLAMA_SERVER_RAG_ENABLE_ROCKSDB "Mirror RAG storage write batches into a RocksDB backend" OFF)
 
 set(LLAMA_SERVER_RAG_CXPARSER_TYPES_HEADER
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../cxparser_ext/pipeline/parser_task_types.h")
@@ -18,9 +19,35 @@ set(LLAMA_SERVER_RAG_FAISS_ROOT "" CACHE PATH "Root directory of the FAISS sourc
 set(LLAMA_SERVER_RAG_FAISS_INCLUDE_DIR "" CACHE PATH "Directory containing FAISS headers for tools/server/RAG")
 set(LLAMA_SERVER_RAG_FAISS_LIBRARY "" CACHE FILEPATH "Path to the FAISS library for tools/server/RAG")
 set(LLAMA_SERVER_RAG_OPENBLAS_LIBRARY "" CACHE FILEPATH "Path to the OpenBLAS library used by FAISS for tools/server/RAG")
+set(LLAMA_SERVER_RAG_ROCKSDB_ROOT "" CACHE PATH "Root directory of the RocksDB source or install tree for tools/server/RAG")
+set(LLAMA_SERVER_RAG_ROCKSDB_INCLUDE_DIR "" CACHE PATH "Directory containing RocksDB headers for tools/server/RAG")
+set(LLAMA_SERVER_RAG_ROCKSDB_LIBRARY "" CACHE FILEPATH "Path to the RocksDB library for tools/server/RAG")
 
-if (NOT LLAMA_SERVER_RAG_FAISS_ROOT AND EXISTS "${CMAKE_SOURCE_DIR}/analysis_workspace/faiss-main")
-    set(LLAMA_SERVER_RAG_FAISS_ROOT "${CMAKE_SOURCE_DIR}/analysis_workspace/faiss-main" CACHE PATH "Root directory of the FAISS source tree for tools/server/RAG" FORCE)
+if (LLAMA_SERVER_RAG_FAISS_INCLUDE_DIR AND
+    NOT EXISTS "${LLAMA_SERVER_RAG_FAISS_INCLUDE_DIR}/faiss/IndexFlat.h")
+    unset(LLAMA_SERVER_RAG_FAISS_INCLUDE_DIR CACHE)
+endif()
+
+if (LLAMA_SERVER_RAG_FAISS_ROOT AND
+    NOT EXISTS "${LLAMA_SERVER_RAG_FAISS_ROOT}/faiss/IndexFlat.h")
+    unset(LLAMA_SERVER_RAG_FAISS_ROOT CACHE)
+endif()
+
+set(_rag_faiss_root_candidates
+    "${CMAKE_SOURCE_DIR}/analysis_workspace/faiss-main"
+    "${CMAKE_SOURCE_DIR}/../analysis_workspace/faiss-main"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../analysis_workspace/faiss-main"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../analysis_workspace/faiss-main"
+)
+
+if (NOT LLAMA_SERVER_RAG_FAISS_ROOT)
+    foreach(_candidate IN LISTS _rag_faiss_root_candidates)
+        if (EXISTS "${_candidate}/faiss/IndexFlat.h")
+            get_filename_component(_candidate_abs "${_candidate}" ABSOLUTE)
+            set(LLAMA_SERVER_RAG_FAISS_ROOT "${_candidate_abs}" CACHE PATH "Root directory of the FAISS source tree for tools/server/RAG" FORCE)
+            break()
+        endif()
+    endforeach()
 endif()
 
 if (NOT LLAMA_SERVER_RAG_FAISS_INCLUDE_DIR AND LLAMA_SERVER_RAG_FAISS_ROOT)
@@ -42,6 +69,8 @@ if (NOT LLAMA_SERVER_RAG_FAISS_LIBRARY AND LLAMA_SERVER_RAG_FAISS_ROOT)
         HINTS
             "${LLAMA_SERVER_RAG_FAISS_ROOT}/build-openblas-check2/faiss/Release"
             "${LLAMA_SERVER_RAG_FAISS_ROOT}/build-openblas-check2/faiss"
+            "${LLAMA_SERVER_RAG_FAISS_ROOT}/build-mkl-check2/faiss/Release"
+            "${LLAMA_SERVER_RAG_FAISS_ROOT}/build-mkl-check2/faiss"
             "${LLAMA_SERVER_RAG_FAISS_ROOT}/build/faiss/Release"
             "${LLAMA_SERVER_RAG_FAISS_ROOT}/build/faiss"
     )
@@ -66,6 +95,83 @@ if (NOT LLAMA_SERVER_RAG_OPENBLAS_LIBRARY)
         HINTS
             "D:/OpenBLAS/lib"
     )
+endif()
+
+if (LLAMA_SERVER_RAG_ENABLE_ROCKSDB)
+    if (LLAMA_SERVER_RAG_ROCKSDB_INCLUDE_DIR AND
+        NOT EXISTS "${LLAMA_SERVER_RAG_ROCKSDB_INCLUDE_DIR}/rocksdb/db.h")
+        unset(LLAMA_SERVER_RAG_ROCKSDB_INCLUDE_DIR CACHE)
+    endif()
+
+    if (LLAMA_SERVER_RAG_ROCKSDB_ROOT AND
+        NOT EXISTS "${LLAMA_SERVER_RAG_ROCKSDB_ROOT}/include/rocksdb/db.h" AND
+        NOT EXISTS "${LLAMA_SERVER_RAG_ROCKSDB_ROOT}/rocksdb/db.h")
+        unset(LLAMA_SERVER_RAG_ROCKSDB_ROOT CACHE)
+    endif()
+
+    set(_rag_rocksdb_root_candidates
+        "${CMAKE_SOURCE_DIR}/analysis_workspace/rocksdb-11.0.4"
+        "${CMAKE_SOURCE_DIR}/../analysis_workspace/rocksdb-11.0.4"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../../analysis_workspace/rocksdb-11.0.4"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../analysis_workspace/rocksdb-11.0.4"
+    )
+
+    if (NOT LLAMA_SERVER_RAG_ROCKSDB_ROOT)
+        foreach(_candidate IN LISTS _rag_rocksdb_root_candidates)
+            if (EXISTS "${_candidate}/include/rocksdb/db.h")
+                get_filename_component(_candidate_abs "${_candidate}" ABSOLUTE)
+                set(LLAMA_SERVER_RAG_ROCKSDB_ROOT "${_candidate_abs}" CACHE PATH "Root directory of the RocksDB source or install tree for tools/server/RAG" FORCE)
+                break()
+            endif()
+        endforeach()
+    endif()
+
+    if (NOT LLAMA_SERVER_RAG_ROCKSDB_INCLUDE_DIR AND LLAMA_SERVER_RAG_ROCKSDB_ROOT)
+        set(_rag_rocksdb_include_candidates
+            "${LLAMA_SERVER_RAG_ROCKSDB_ROOT}/include"
+            "${LLAMA_SERVER_RAG_ROCKSDB_ROOT}"
+        )
+        foreach(_candidate IN LISTS _rag_rocksdb_include_candidates)
+            if (EXISTS "${_candidate}/rocksdb/db.h")
+                set(LLAMA_SERVER_RAG_ROCKSDB_INCLUDE_DIR "${_candidate}" CACHE PATH "Directory containing RocksDB headers for tools/server/RAG" FORCE)
+                break()
+            endif()
+        endforeach()
+    endif()
+
+    if (NOT LLAMA_SERVER_RAG_ROCKSDB_LIBRARY AND LLAMA_SERVER_RAG_ROCKSDB_ROOT)
+        find_library(LLAMA_SERVER_RAG_ROCKSDB_LIBRARY
+            NAMES rocksdb librocksdb rocksdb_static
+            HINTS
+                "${LLAMA_SERVER_RAG_ROCKSDB_ROOT}/build/Release"
+                "${LLAMA_SERVER_RAG_ROCKSDB_ROOT}/build"
+                "${LLAMA_SERVER_RAG_ROCKSDB_ROOT}/lib"
+                "${CMAKE_SOURCE_DIR}/rocksdb-build/Release"
+                "${CMAKE_SOURCE_DIR}/../rocksdb-build/Release"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../../../rocksdb-build/Release"
+        )
+    endif()
+
+    if (NOT LLAMA_SERVER_RAG_ROCKSDB_INCLUDE_DIR)
+        find_path(LLAMA_SERVER_RAG_ROCKSDB_INCLUDE_DIR
+            NAMES rocksdb/db.h
+            HINTS ${LLAMA_SERVER_RAG_ROCKSDB_ROOT}
+        )
+    endif()
+
+    if (NOT LLAMA_SERVER_RAG_ROCKSDB_LIBRARY)
+        find_library(LLAMA_SERVER_RAG_ROCKSDB_LIBRARY
+            NAMES rocksdb librocksdb rocksdb_static
+            HINTS
+                "${CMAKE_SOURCE_DIR}/rocksdb-build/Release"
+                "${CMAKE_SOURCE_DIR}/../rocksdb-build/Release"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../../../rocksdb-build/Release"
+        )
+    endif()
+
+    if (NOT LLAMA_SERVER_RAG_ROCKSDB_INCLUDE_DIR OR NOT LLAMA_SERVER_RAG_ROCKSDB_LIBRARY)
+        message(FATAL_ERROR "tools/server/RAG RocksDB backend requested. Set LLAMA_SERVER_RAG_ROCKSDB_INCLUDE_DIR and LLAMA_SERVER_RAG_ROCKSDB_LIBRARY.")
+    endif()
 endif()
 
 if (NOT LLAMA_SERVER_RAG_FAISS_INCLUDE_DIR OR NOT LLAMA_SERVER_RAG_FAISS_LIBRARY)
@@ -124,6 +230,25 @@ target_link_libraries(server-rag-core PUBLIC
 target_compile_definitions(server-rag-core PUBLIC
     LLAMA_SERVER_RAG_MODULE=1
 )
+
+if (LLAMA_SERVER_RAG_ENABLE_ROCKSDB)
+    target_compile_features(server-rag-core PUBLIC cxx_std_20)
+    target_include_directories(server-rag-core PUBLIC
+        ${LLAMA_SERVER_RAG_ROCKSDB_INCLUDE_DIR}
+    )
+    target_link_libraries(server-rag-core PUBLIC
+        ${LLAMA_SERVER_RAG_ROCKSDB_LIBRARY}
+    )
+    if (WIN32)
+        target_link_libraries(server-rag-core PUBLIC
+            shlwapi
+            rpcrt4
+        )
+    endif()
+    target_compile_definitions(server-rag-core PUBLIC
+        LLAMA_SERVER_RAG_ROCKSDB_BACKEND=1
+    )
+endif()
 
 if (LLAMA_SERVER_RAG_ENABLE_CXPARSER_BRIDGE AND
     EXISTS "${LLAMA_SERVER_RAG_CXPARSER_TYPES_HEADER}" AND

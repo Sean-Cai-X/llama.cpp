@@ -631,7 +631,7 @@ json remote_session_store::upsert_turn(
     turn["error_signature"] = get_string(slice, "error_signature");
     turn["solution_summary"] = get_string(slice, "solution_summary");
     turn["strategy_family"] = get_string(slice, "strategy_family");
-    turn["similarity_score"] = slice.contains("similarity_score") ? slice["similarity_score"] : 0.0;
+    turn["similarity_score"] = slice.value("similarity_score", 0.0);
     turn["vector_ready"] = slice.value("vector_ready", false);
     turn["vector_skip_reason"] = get_string(slice, "vector_skip_reason");
 

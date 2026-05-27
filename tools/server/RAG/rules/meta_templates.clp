@@ -68,3 +68,100 @@
   (slot reason)
   (slot rule-id)
   (slot next-action))
+
+(deftemplate semantic-slice
+  (slot slice-id)
+  (slot file-id)
+  (slot source-uri)
+  (slot start-line (type INTEGER))
+  (slot end-line (type INTEGER))
+  (slot text-hash)
+  (slot language)
+  (slot symbol-scope)
+  (slot status))
+
+(deftemplate slice-edge
+  (slot edge-id)
+  (slot from-slice)
+  (slot to-slice)
+  (slot edge-type)
+  (slot confidence (type FLOAT))
+  (slot source)
+  (slot evidence-ref-a)
+  (slot evidence-ref-b)
+  (slot status))
+
+(deftemplate coupling-candidate
+  (slot candidate-id)
+  (slot from-slice)
+  (slot to-slice)
+  (slot candidate-type)
+  (slot score (type FLOAT))
+  (slot source)
+  (slot status))
+
+(deftemplate coupling-policy
+  (slot task-type)
+  (multislot allowed-edge-types)
+  (slot max-depth (type INTEGER))
+  (slot max-context-slices (type INTEGER))
+  (slot min-confidence (type FLOAT))
+  (slot token-budget (type INTEGER)))
+
+(deftemplate coupling-decision
+  (slot candidate-id)
+  (slot decision)
+  (slot reason)
+  (slot final-edge-type)
+  (slot final-confidence (type FLOAT))
+  (slot status))
+
+(deftemplate llama-output-candidate
+  (slot request-id)
+  (slot trace-id)
+  (slot model-task-id)
+  (slot source-slice-id)
+  (slot output-hash)
+  (slot status))
+
+(deftemplate viewpoint-candidate
+  (slot viewpoint-id)
+  (slot request-id)
+  (slot trace-id)
+  (slot model-task-id)
+  (slot source-slice-id)
+  (slot claim-text)
+  (slot claim-type)
+  (slot subject)
+  (slot predicate)
+  (slot object)
+  (slot confidence (type FLOAT))
+  (slot status))
+
+(deftemplate evidence-binding
+  (slot viewpoint-id)
+  (slot source-type)
+  (slot source-id)
+  (slot evidence-ref)
+  (slot evidence-hash)
+  (slot match-status)
+  (slot status))
+
+(deftemplate viewpoint-validation
+  (slot viewpoint-id)
+  (slot schema-valid)
+  (slot evidence-valid)
+  (slot rule-valid)
+  (slot conflict-status)
+  (slot confidence-valid)
+  (slot scope-valid)
+  (slot validation-status)
+  (slot reject-reason))
+
+(deftemplate viewpoint-decision
+  (slot viewpoint-id)
+  (slot decision)
+  (slot reason)
+  (slot final-confidence (type FLOAT))
+  (slot action)
+  (slot status))

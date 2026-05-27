@@ -645,6 +645,23 @@ bool RagEngine::load() {
             }
         }
 
+        {
+            RagFileStorage storage(config_.index_path);
+            storage.save_manifest();
+
+            RagRawSliceStore raw_store;
+            for (const auto & item : raw_slice_text_) {
+                const std::string & slice_id = item.first;
+                raw_store.slices[slice_id] = RagRawSliceRecord{
+                    slice_id,
+                    item.second,
+                    raw_slice_metadata_[slice_id],
+                    raw_slice_hashes_[slice_id],
+                    slice_vector_ids_.count(slice_id) ? slice_vector_ids_[slice_id] : -1,
+                };
+            }
+            storage.save_raw_slices(raw_store);
+        }
         return true;
     } catch (...) {
         index_.reset();

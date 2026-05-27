@@ -100,6 +100,9 @@
 					stage3: 'stage3_reasoning',
 					stage4: 'stage4_inherited_config'
 				});
+				const CODEX_SIDEBAR_WIDTH_KEY = 'codex.sidebar.width.px';
+				const CODEX_OVERVIEW_COUNT_BASELINE_KEY = 'codex.overview.item.seen.v1';
+				const CODEX_OVERVIEW_COUNT_DELTA_KEY = 'codex.overview.count.delta.v1';
 				let codexRemoteSessionsFetchPromise = null;
 				let codexRemoteSessionsLastFetchAt = 0;
 				let codexRemoteSessionsRenderQueued = false;
@@ -108,6 +111,35 @@
 				let codexBrowserListOverviewFetchPromise = null;
 				let codexBrowserListOverviewLastFetchAt = 0;
 				let codexBrowserListOverviewLastPayload = null;
+				let codexBrowserListOverviewLastError = '';
+				const codexOverviewSectionDetailCache = new Map();
+				const codexOverviewSectionPreviewFetches = new Map();
+
+				function getCodexLanAgentFetchOrigins() {
+					const hostName = window.location.hostname || '127.0.0.1';
+					return [
+						'',
+						'http://127.0.0.1:18080',
+						'http://localhost:18080',
+						hostName && hostName !== '127.0.0.1' && hostName !== 'localhost'
+							? `${window.location.protocol}//${hostName}:18080`
+							: ''
+					].filter((origin) => origin !== false && origin !== null && origin !== undefined);
+				}
+
+				async function fetchJsonFromCodexLanAgentPath(path) {
+					if (!path) return null;
+					const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+					for (const origin of getCodexLanAgentFetchOrigins()) {
+						const url = origin ? `${origin}${normalizedPath}` : `.${normalizedPath}`;
+						try {
+							const response = await fetch(url, { method: 'GET' });
+							if (!response.ok) continue;
+							return await response.json();
+						} catch {}
+					}
+					return null;
+				}
 
 				function openCodexAuditDb() {
 					return new Promise((resolve, reject) => {
@@ -318,15 +350,26 @@
 					try {
 						codexBrowserListOverviewLastFetchAt = now;
 						codexBrowserListOverviewFetchPromise = (async () => {
-							const tryPaths = ['./overview/browser-list', './browser-list-overview'];
+							const tryPaths = [];
+							for (const origin of getCodexLanAgentFetchOrigins()) {
+								tryPaths.push(`${origin}/overview/browser-list`);
+								tryPaths.push(`${origin}/browser-list-overview`);
+							}
+							tryPaths.unshift('./overview/browser-list', './browser-list-overview');
 							for (const path of tryPaths) {
 								try {
 									const response = await fetch(path, { method: 'GET' });
-									if (!response.ok) continue;
+									if (!response.ok) {
+										codexBrowserListOverviewLastError = `${path} -> HTTP ${response.status}`;
+										continue;
+									}
 									const payload = await response.json();
 									codexBrowserListOverviewLastPayload = payload;
+									codexBrowserListOverviewLastError = '';
 									return payload;
-								} catch {}
+								} catch (error) {
+									codexBrowserListOverviewLastError = `${path} -> ${error?.message || 'fetch failed'}`;
+								}
 							}
 							return null;
 						})();
@@ -336,34 +379,43 @@
 					}
 				}
 
+				async function fetchOverviewPath(path) {
+					if (!path) return null;
+					return await fetchJsonFromCodexLanAgentPath(path);
+				}
+
 				async function fetchRemoteSessions(limit = 20) {
 					const now = Date.now();
 					if (codexRemoteSessionsFetchPromise) {
 						return codexRemoteSessionsFetchPromise;
 					}
 					if (now - codexRemoteSessionsLastFetchAt < 4000) {
-						return [];
+						return codexRemoteSessionsLastItems;
 					}
 					try {
 						codexRemoteSessionsLastFetchAt = now;
-						codexRemoteSessionsFetchPromise = fetch(`./v1/remote-sessions?limit=${limit}`, { method: 'GET' });
-						const response = await codexRemoteSessionsFetchPromise;
-						if (!response.ok) return [];
-						const payload = await response.json();
-						const items = Array.isArray(payload?.items)
-							? payload.items
-							: Array.isArray(payload?.sessions)
-								? payload.sessions
-								: Array.isArray(payload)
-									? payload
-									: [];
-						if (items.length) {
-							codexRemoteSessionsLastItems = items;
-							codexRemoteSessionsLastItemsAt = Date.now();
-						}
-						return items;
+						codexRemoteSessionsFetchPromise = (async () => {
+							const payload = await fetchJsonFromCodexLanAgentPath(`/v1/remote-sessions?limit=${limit}`);
+							let items = Array.isArray(payload?.items)
+								? payload.items
+								: Array.isArray(payload?.sessions)
+									? payload.sessions
+									: Array.isArray(payload)
+										? payload
+										: [];
+							if (!items.length) {
+								const overview = await fetchOverviewPath('/overview/remote-sessions');
+								items = overviewValueToItems(resolveOverviewPayloadValue(overview, 'session_items_json'));
+							}
+							if (items.length) {
+								codexRemoteSessionsLastItems = items;
+								codexRemoteSessionsLastItemsAt = Date.now();
+							}
+							return items;
+						})();
+						return await codexRemoteSessionsFetchPromise;
 					} catch {
-						return [];
+						return codexRemoteSessionsLastItems;
 					} finally {
 						codexRemoteSessionsFetchPromise = null;
 					}
@@ -371,9 +423,7 @@
 
 				async function fetchRemoteSession(sessionId) {
 					try {
-						const response = await fetch(`./v1/remote-sessions/${encodeURIComponent(sessionId)}`, { method: 'GET' });
-						if (!response.ok) return null;
-						return await response.json();
+						return await fetchJsonFromCodexLanAgentPath(`/v1/remote-sessions/${encodeURIComponent(sessionId)}`);
 					} catch {
 						return null;
 					}
@@ -1052,6 +1102,87 @@
 					if (status) status.textContent = 'Loaded from remote_session_store.';
 				}
 
+				function ensureOverviewAuditItemModal() {
+					let overlay = document.getElementById('codex-overview-audit-item-modal');
+					if (overlay) return overlay;
+					overlay = document.createElement('div');
+					overlay.id = 'codex-overview-audit-item-modal';
+					overlay.style.cssText = [
+						'position:fixed',
+						'inset:0',
+						'z-index:9998',
+						'display:none',
+						'align-items:center',
+						'justify-content:center',
+						'padding:24px',
+						'background:rgba(0,0,0,0.58)'
+					].join(';');
+					overlay.innerHTML = `
+						<div class="codex-overview-audit-dialog" style="width:min(960px,96vw);height:78vh;min-width:640px;min-height:420px;max-width:98vw;max-height:92vh;resize:both;overflow:hidden;display:flex;flex-direction:column;gap:12px;border:1px solid rgba(255,255,255,0.18);border-radius:18px;background:#111;color:#f4f4f4;box-shadow:0 24px 80px rgba(0,0,0,0.55);padding:16px;">
+							<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+								<div>
+									<div class="codex-overview-audit-title" style="font-size:16px;font-weight:700;">Overview audit item</div>
+									<div class="codex-overview-audit-meta" style="margin-top:4px;font-size:12px;opacity:0.72;"></div>
+								</div>
+								<button type="button" class="codex-overview-audit-close" style="border:none;border-radius:999px;background:rgba(255,255,255,0.12);color:inherit;padding:6px 10px;cursor:pointer;">Close</button>
+							</div>
+							<div class="codex-overview-audit-body" style="display:flex;flex:1 1 auto;flex-direction:column;gap:12px;overflow:auto;min-height:220px;padding:10px;border-radius:12px;background:rgba(255,255,255,0.04);"></div>
+						</div>`;
+					document.body.appendChild(overlay);
+					overlay.querySelector('.codex-overview-audit-close')?.addEventListener('click', () => {
+						overlay.style.display = 'none';
+					});
+					overlay.addEventListener('click', (event) => {
+						if (event.target === overlay) overlay.style.display = 'none';
+					});
+					return overlay;
+				}
+
+				function createOverviewAuditFieldGrid(item) {
+					const grid = document.createElement('div');
+					grid.style.cssText = 'display:grid;grid-template-columns:140px minmax(0,1fr);gap:6px 10px;border:1px solid rgba(255,255,255,0.10);border-radius:12px;padding:10px;background:rgba(255,255,255,0.035);';
+					if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+						appendOverviewKeyValue(grid, 'value', item);
+						return grid;
+					}
+					for (const [key, value] of Object.entries(item)) {
+						appendOverviewKeyValue(grid, key, typeof value === 'object' && value !== null ? JSON.stringify(value) : value);
+					}
+					return grid;
+				}
+
+				function openOverviewAuditItemModal(item, context = {}) {
+					const sessionId = item && typeof item === 'object' ? (item.session_id || item.sessionId) : '';
+					if (sessionId) {
+						loadRemoteSessionModal(sessionId).catch((error) => console.warn('[codex overview audit] remote session modal failed:', error));
+						return;
+					}
+					const overlay = ensureOverviewAuditItemModal();
+					const title = overlay.querySelector('.codex-overview-audit-title');
+					const meta = overlay.querySelector('.codex-overview-audit-meta');
+					const body = overlay.querySelector('.codex-overview-audit-body');
+					const summary = summarizeOverviewListItem(item);
+					if (title) title.textContent = summary || 'Overview audit item';
+					if (meta) {
+						meta.textContent = [
+							context.sectionTitle || context.sectionId || '',
+							context.payloadField || '',
+							context.index !== undefined ? `item ${Number(context.index) + 1}` : ''
+						].filter(Boolean).join(' | ');
+					}
+					if (body) {
+						body.innerHTML = '';
+						const summaryBlock = createRemoteSection('Summary', summary || '(empty)', { showEmpty: true, background: 'rgba(255,255,255,0.08)' });
+						if (summaryBlock) body.appendChild(summaryBlock);
+						body.appendChild(createOverviewAuditFieldGrid(item));
+						body.appendChild(createRemoteJsonDetails('Full item JSON', item, { open: true }));
+						if (context.sourcePayload) {
+							body.appendChild(createRemoteJsonDetails('Source overview payload', context.sourcePayload, { open: false }));
+						}
+					}
+					overlay.style.display = 'flex';
+				}
+
 				function remoteConversationId(sessionId) {
 					return `remote-session-${sessionId}`;
 				}
@@ -1728,9 +1859,122 @@
 					return buttons[0].parentElement;
 				}
 
+				function findCodexSidebarRoot() {
+					const sidebarLabel = findConversationSectionLabel();
+					if (!sidebarLabel) return null;
+					let node = sidebarLabel;
+					let best = null;
+					while (node && node !== document.body) {
+						if (!(node instanceof HTMLElement)) {
+							node = node.parentElement;
+							continue;
+						}
+						const rect = node.getBoundingClientRect();
+						const style = window.getComputedStyle(node);
+						const isSidebarLike =
+							rect.height > Math.max(240, window.innerHeight * 0.5) &&
+							rect.width >= 160 &&
+							rect.width <= Math.max(520, window.innerWidth * 0.45) &&
+							style.display !== 'contents';
+						if (isSidebarLike) {
+							best = node;
+						}
+						if (
+							node.tagName === 'ASIDE' ||
+							node.getAttribute('data-sidebar') === 'sidebar' ||
+							node.getAttribute('data-slot') === 'sidebar'
+						) {
+							return node;
+						}
+						node = node.parentElement;
+					}
+					return best;
+				}
+
+				function clampSidebarWidth(width) {
+					const maxWidth = Math.max(320, Math.min(720, Math.floor(window.innerWidth * 0.6)));
+					return Math.max(220, Math.min(maxWidth, Math.round(width)));
+				}
+
+				function applyCodexSidebarWidth(sidebar, width) {
+					if (!sidebar) return;
+					const nextWidth = clampSidebarWidth(width);
+					sidebar.style.width = `${nextWidth}px`;
+					sidebar.style.minWidth = `${nextWidth}px`;
+					sidebar.style.maxWidth = `${nextWidth}px`;
+					sidebar.style.flexBasis = `${nextWidth}px`;
+					sidebar.style.flexShrink = '0';
+					sidebar.dataset.codexSidebarResizable = 'true';
+				}
+
+				function installCodexSidebarResizeHandle() {
+					const sidebar = findCodexSidebarRoot();
+					if (!sidebar) return;
+					let savedWidth = 0;
+					try {
+						savedWidth = Number(localStorage.getItem(CODEX_SIDEBAR_WIDTH_KEY) || 0);
+					} catch {}
+					if (savedWidth > 0) {
+						applyCodexSidebarWidth(sidebar, savedWidth);
+					}
+					if (sidebar.querySelector(':scope > .codex-sidebar-resize-handle')) return;
+					if (window.getComputedStyle(sidebar).position === 'static') {
+						sidebar.style.position = 'relative';
+					}
+					const handle = document.createElement('div');
+					handle.className = 'codex-sidebar-resize-handle';
+					handle.title = 'Drag to resize sidebar';
+					handle.style.cssText = [
+						'position:absolute',
+						'top:0',
+						'right:-4px',
+						'width:8px',
+						'height:100%',
+						'z-index:40',
+						'cursor:col-resize',
+						'touch-action:none',
+						'background:transparent'
+					].join(';');
+					handle.addEventListener('mouseenter', () => {
+						handle.style.background = 'rgba(128,128,128,0.18)';
+					});
+					handle.addEventListener('mouseleave', () => {
+						if (!handle.dataset.dragging) handle.style.background = 'transparent';
+					});
+					handle.addEventListener('pointerdown', (event) => {
+						if (event.button !== 0) return;
+						event.preventDefault();
+						event.stopPropagation();
+						const startX = event.clientX;
+						const startWidth = sidebar.getBoundingClientRect().width;
+						handle.dataset.dragging = 'true';
+						handle.style.background = 'rgba(128,128,128,0.28)';
+						handle.setPointerCapture?.(event.pointerId);
+						const onMove = (moveEvent) => {
+							const nextWidth = clampSidebarWidth(startWidth + moveEvent.clientX - startX);
+							applyCodexSidebarWidth(sidebar, nextWidth);
+						};
+						const onUp = (upEvent) => {
+							document.removeEventListener('pointermove', onMove, true);
+							document.removeEventListener('pointerup', onUp, true);
+							document.removeEventListener('pointercancel', onUp, true);
+							handle.releasePointerCapture?.(upEvent.pointerId);
+							delete handle.dataset.dragging;
+							handle.style.background = 'transparent';
+							try {
+								localStorage.setItem(CODEX_SIDEBAR_WIDTH_KEY, String(Math.round(sidebar.getBoundingClientRect().width)));
+							} catch {}
+						};
+						document.addEventListener('pointermove', onMove, true);
+						document.addEventListener('pointerup', onUp, true);
+						document.addEventListener('pointercancel', onUp, true);
+					});
+					sidebar.appendChild(handle);
+				}
+
 				const CODEX_SIDEBAR_SECTION_STATE_KEY = 'codex.sidebar.section.state';
 				const CODEX_SIDEBAR_SECTION_STATE_VERSION_KEY = 'codex.sidebar.section.state.version';
-				const CODEX_SIDEBAR_SECTION_STATE_VERSION = 'browser-list-overview-v3';
+				const CODEX_SIDEBAR_SECTION_STATE_VERSION = 'browser-list-overview-v4';
 				let codexSidebarSectionStateMigrated = false;
 
 				function migrateSidebarSectionStateOnce() {
@@ -1976,9 +2220,60 @@
 					const summary = document.createElement('div');
 					summary.className = 'codex-browser-overview-card-summary';
 					summary.style.cssText = 'font-size:12px;line-height:1.35;opacity:0.82;';
+					const auditList = document.createElement('div');
+					auditList.className = 'codex-browser-overview-audit-list';
+					auditList.style.cssText = 'display:none;flex-direction:column;gap:4px;margin-top:4px;';
+					const actions = document.createElement('div');
+					actions.className = 'codex-browser-overview-card-actions';
+					actions.style.cssText = 'display:flex;gap:6px;justify-content:flex-end;';
+					const detailsButton = document.createElement('button');
+					detailsButton.type = 'button';
+					detailsButton.className = 'codex-browser-overview-details-button';
+					detailsButton.textContent = 'Details';
+					detailsButton.style.cssText = 'font-size:11px;line-height:1;padding:4px 8px;border:none;border-radius:999px;background:rgba(255,255,255,0.08);color:inherit;cursor:pointer;';
+					const refreshButton = document.createElement('button');
+					refreshButton.type = 'button';
+					refreshButton.className = 'codex-browser-overview-refresh-button';
+					refreshButton.textContent = 'Refresh';
+					refreshButton.style.cssText = 'font-size:11px;line-height:1;padding:4px 8px;border:none;border-radius:999px;background:rgba(255,255,255,0.08);color:inherit;cursor:pointer;';
+					actions.appendChild(detailsButton);
+					actions.appendChild(refreshButton);
+					const details = document.createElement('div');
+					details.className = 'codex-browser-overview-card-details';
+					details.style.cssText = [
+						'display:none',
+						'margin:2px 0 0 0',
+						'padding:8px',
+						'max-height:180px',
+						'overflow:auto',
+						'border-radius:8px',
+						'background:rgba(0,0,0,0.08)',
+						'font-size:11px',
+						'line-height:1.35',
+						'white-space:pre-wrap',
+						'word-break:break-word'
+					].join(';');
 					node.appendChild(titleRow);
 					node.appendChild(meta);
 					node.appendChild(summary);
+					node.appendChild(auditList);
+					node.appendChild(actions);
+					node.appendChild(details);
+					detailsButton.addEventListener('click', (event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						const isHidden = details.style.display === 'none';
+						details.style.display = isHidden ? 'block' : 'none';
+						detailsButton.textContent = isHidden ? 'Hide' : 'Details';
+						if (isHidden && !details.dataset.loadedPayload) {
+							refreshOverviewCardDetails(node).catch(() => {});
+						}
+					});
+					refreshButton.addEventListener('click', async (event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						await refreshOverviewCardDetails(node);
+					});
 					updateOverviewCard(node, card);
 					return node;
 				}
@@ -1990,6 +2285,8 @@
 					const badge = node.querySelector('.codex-browser-overview-card-badge');
 					const meta = node.querySelector('.codex-browser-overview-card-meta');
 					const summary = node.querySelector('.codex-browser-overview-card-summary');
+					const auditList = node.querySelector('.codex-browser-overview-audit-list');
+					const details = node.querySelector('.codex-browser-overview-card-details');
 					const nextTitle = card.title || card.browser_section_title || card.id || 'Overview';
 					const nextStatus = normalizeText(card.status || card.browser_status || 'unknown');
 					const nextCount = card.primary_count ?? card.browser_primary_count ?? '';
@@ -2004,12 +2301,520 @@
 					if (badge) badge.textContent = nextStatus || 'unknown';
 					if (meta) meta.textContent = nextMeta;
 					if (summary) summary.textContent = nextSummary || '(no summary)';
+					node.dataset.httpGetPath = card.http_get_path || card.browser_http_get_path || '';
+					node.dataset.payloadField = card.payload_field || card.browser_payload_field || '';
+					node.dataset.toolName = card.tool_name || card.browser_tool_name || '';
+					node.dataset.sectionTitle = nextTitle;
+					if (details && details.textContent.trim().length === 0) {
+						renderOverviewCardDetails(details, card, null);
+					}
+					if (auditList) {
+						const previewKey = [
+							node.dataset.sectionId || '',
+							node.dataset.httpGetPath || '',
+							node.dataset.payloadField || '',
+							nextCount
+						].join('|');
+						if (auditList.dataset.previewKey !== previewKey) {
+							auditList.dataset.previewKey = previewKey;
+							auditList.dataset.previewStatus = '';
+							renderOverviewAuditPreviewSeed(auditList, card);
+						}
+					}
 					node.title = [
 						nextTitle,
 						nextMeta,
 						card.browser_route_hint || card.route_hint || '',
 						card.payload_field || card.browser_payload_field || ''
 					].filter(Boolean).join(' | ');
+				}
+
+				function resolveOverviewPayloadValue(payload, payloadField) {
+					if (!payloadField || !payload) return payload;
+					if (payload[payloadField] !== undefined) return payload[payloadField];
+					if (payload.fields && payload.fields[payloadField] !== undefined) return payload.fields[payloadField];
+					if (payload.result && payload.result[payloadField] !== undefined) return payload.result[payloadField];
+					return payload;
+				}
+
+				function formatOverviewValue(value) {
+					const parsed = parseRemoteJsonLike(value);
+					if (parsed !== null && parsed !== undefined && parsed !== value) {
+						try {
+							return JSON.stringify(parsed, null, 2);
+						} catch {}
+					}
+					if (typeof value === 'object' && value !== null) {
+						try {
+							return JSON.stringify(value, null, 2);
+						} catch {}
+					}
+					return String(value ?? '');
+				}
+
+				function overviewValueToItems(value) {
+					const parsed = parseRemoteJsonLike(value);
+					const effective = parsed !== null && parsed !== undefined && parsed !== value ? parsed : value;
+					if (Array.isArray(effective)) return effective;
+					if (typeof effective === 'string') {
+						return effective
+							.split(/[,;\n]/)
+							.map((item) => item.trim())
+							.filter(Boolean);
+					}
+					return [];
+				}
+
+				function summarizeOverviewListItem(item) {
+					if (typeof item !== 'object' || item === null) return String(item ?? '');
+					return [
+						item.tool_name,
+						item.title,
+						item.name,
+						item.session_id || item.sessionId,
+						item.task_id || item.taskId,
+						item.command_name,
+						item.status,
+						item.summary || item.current_summary
+					].filter(Boolean).join(' | ') || JSON.stringify(item);
+				}
+
+				function stableStringifyOverviewValue(value) {
+					if (value === null || typeof value !== 'object') return String(value ?? '');
+					if (Array.isArray(value)) {
+						return `[${value.map((item) => stableStringifyOverviewValue(item)).join(',')}]`;
+					}
+					return `{${Object.keys(value).sort().map((key) => `${key}:${stableStringifyOverviewValue(value[key])}`).join('|')}}`;
+				}
+
+				function hashOverviewString(value) {
+					const text = String(value || '');
+					let hash = 2166136261;
+					for (let index = 0; index < text.length; index += 1) {
+						hash ^= text.charCodeAt(index);
+						hash = Math.imul(hash, 16777619);
+					}
+					return (hash >>> 0).toString(36);
+				}
+
+				function getOverviewAuditListKey(options = {}) {
+					return [
+						options.sectionId || '',
+						options.payloadField || ''
+					].join('|');
+				}
+
+				function getOverviewAuditItemKey(item) {
+					if (item && typeof item === 'object') {
+						const stableId = item.session_id || item.sessionId || item.task_id || item.taskId || item.patch_id || item.event_id || item.trace_id || item.name || item.tool_name || item.command_name;
+						if (stableId) return hashOverviewString(`${stableId}|${summarizeOverviewListItem(item)}`);
+					}
+					return hashOverviewString(stableStringifyOverviewValue(item));
+				}
+
+				function readOverviewSeenState() {
+					try {
+						const raw = localStorage.getItem(CODEX_OVERVIEW_COUNT_BASELINE_KEY);
+						const parsed = raw ? JSON.parse(raw) : {};
+						return parsed && typeof parsed === 'object' ? parsed : {};
+					} catch {
+						return {};
+					}
+				}
+
+				function writeOverviewSeenState(state) {
+					try {
+						localStorage.setItem(CODEX_OVERVIEW_COUNT_BASELINE_KEY, JSON.stringify(state || {}));
+					} catch {}
+				}
+
+				function readOverviewCountDeltaState() {
+					try {
+						const raw = localStorage.getItem(CODEX_OVERVIEW_COUNT_DELTA_KEY);
+						const parsed = raw ? JSON.parse(raw) : {};
+						return parsed && typeof parsed === 'object' ? parsed : {};
+					} catch {
+						return {};
+					}
+				}
+
+				function writeOverviewCountDeltaState(state) {
+					try {
+						localStorage.setItem(CODEX_OVERVIEW_COUNT_DELTA_KEY, JSON.stringify(state || {}));
+					} catch {}
+				}
+
+				function prepareOverviewSeenInfo(items, options = {}) {
+					const listKey = getOverviewAuditListKey(options);
+					const state = readOverviewSeenState();
+					const itemKeys = (items || []).map((item) => getOverviewAuditItemKey(item));
+					if (!state[listKey]) {
+						state[listKey] = {
+							initialized: true,
+							seen: itemKeys
+						};
+						writeOverviewSeenState(state);
+					}
+					const seen = new Set(Array.isArray(state[listKey]?.seen) ? state[listKey].seen : []);
+					const countState = readOverviewCountDeltaState();
+					const hasPreviousCount = Number.isFinite(Number(countState[listKey]?.count));
+					const previousCount = Number(hasPreviousCount ? countState[listKey].count : items.length);
+					const countDelta = Math.max(0, items.length - previousCount);
+					const newestDeltaKeys = itemKeys.slice(0, countDelta);
+					const unseenKeys = [...new Set([
+						...itemKeys.filter((key) => !seen.has(key)),
+						...newestDeltaKeys
+					])];
+					countState[listKey] = {
+						count: items.length,
+						updated_at: Date.now()
+					};
+					writeOverviewCountDeltaState(countState);
+					return { listKey, itemKeys, unseenKeys, seen, countDelta };
+				}
+
+				function markOverviewAuditItemSeen(listKey, itemKey) {
+					if (!listKey || !itemKey) return;
+					const state = readOverviewSeenState();
+					const current = state[listKey] && typeof state[listKey] === 'object' ? state[listKey] : {};
+					const seen = new Set(Array.isArray(current.seen) ? current.seen : []);
+					seen.add(itemKey);
+					state[listKey] = {
+						...current,
+						initialized: true,
+						seen: Array.from(seen).slice(-500)
+					};
+					writeOverviewSeenState(state);
+				}
+
+				function markOverviewAuditListSeen(listKey, itemKeys) {
+					if (!listKey) return;
+					const state = readOverviewSeenState();
+					const current = state[listKey] && typeof state[listKey] === 'object' ? state[listKey] : {};
+					const seen = new Set(Array.isArray(current.seen) ? current.seen : []);
+					for (const key of itemKeys || []) {
+						if (key) seen.add(key);
+					}
+					state[listKey] = {
+						...current,
+						initialized: true,
+						seen: Array.from(seen).slice(-500)
+					};
+					writeOverviewSeenState(state);
+				}
+
+				function applyOverviewAuditRowSeenStyle(row, isNew) {
+					if (!row) return;
+					row.dataset.overviewNewItem = isNew ? 'true' : 'false';
+					row.style.background = isNew ? 'rgba(220,38,38,0.18)' : 'rgba(255,255,255,0.06)';
+					row.style.border = isNew ? '1px solid rgba(239,68,68,0.55)' : 'none';
+					row.style.boxShadow = isNew ? 'inset 3px 0 0 rgba(239,68,68,0.95)' : 'none';
+				}
+
+				function updateOverviewAuditHeaderDelta(headerDelta, delta) {
+					if (!headerDelta) return;
+					headerDelta.textContent = delta > 0 ? `+${delta}` : '';
+					headerDelta.style.display = delta > 0 ? 'inline' : 'none';
+				}
+
+				function normalizeOverviewCount(value) {
+					const number = Number(value);
+					return Number.isFinite(number) ? number : 0;
+				}
+
+				function appendOverviewKeyValue(parent, key, value) {
+					const row = document.createElement('div');
+					row.style.cssText = 'display:grid;grid-template-columns:64px minmax(0,1fr);gap:6px;';
+					const keyNode = document.createElement('span');
+					keyNode.style.opacity = '0.68';
+					keyNode.textContent = key;
+					const valueNode = document.createElement('span');
+					valueNode.textContent = String(value ?? '');
+					row.appendChild(keyNode);
+					row.appendChild(valueNode);
+					parent.appendChild(row);
+				}
+
+				function renderOverviewAuditItems(container, items, options = {}) {
+					if (!container) return;
+					container.innerHTML = '';
+					const limit = Number(options.limit || 12);
+					const collapsedByDefault = options.collapsed !== false;
+					const seenInfo = prepareOverviewSeenInfo(items, options);
+					const unseenSet = new Set(seenInfo.unseenKeys);
+					const header = document.createElement('button');
+					header.type = 'button';
+					header.style.cssText = [
+						'display:flex',
+						'align-items:center',
+						'justify-content:space-between',
+						'gap:8px',
+						'width:100%',
+						'padding:3px 0',
+						'border:none',
+						'background:transparent',
+						'color:inherit',
+						'font:inherit',
+						'font-size:11px',
+						'line-height:1.25',
+						'text-align:left',
+						'cursor:pointer',
+						'opacity:0.78'
+					].join(';');
+					const headerLabel = document.createElement('span');
+					headerLabel.textContent = options.title || `Audit items (${items.length})`;
+					const headerDelta = document.createElement('span');
+					headerDelta.style.cssText = 'margin-left:6px;color:#ef4444;font-weight:700;';
+					updateOverviewAuditHeaderDelta(headerDelta, seenInfo.unseenKeys.length);
+					headerLabel.appendChild(headerDelta);
+					const clearNewButton = document.createElement('button');
+					clearNewButton.type = 'button';
+					clearNewButton.textContent = 'clear';
+					clearNewButton.style.cssText = [
+						'margin-left:6px',
+						'display:none',
+						'border:none',
+						'border-radius:999px',
+						'background:rgba(239,68,68,0.16)',
+						'color:#ef4444',
+						'font:inherit',
+						'font-size:10px',
+						'line-height:1',
+						'padding:2px 6px',
+						'cursor:pointer'
+					].join(';');
+					if (seenInfo.unseenKeys.length > 0) {
+						clearNewButton.style.display = 'inline-flex';
+					}
+					clearNewButton.addEventListener('click', (event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						markOverviewAuditListSeen(seenInfo.listKey, Array.from(unseenSet));
+						unseenSet.clear();
+						updateOverviewAuditHeaderDelta(headerDelta, 0);
+						clearNewButton.style.display = 'none';
+						body.querySelectorAll('[data-overview-new-item="true"]').forEach((row) => {
+							applyOverviewAuditRowSeenStyle(row, false);
+						});
+					});
+					headerLabel.appendChild(clearNewButton);
+					const headerChevron = document.createElement('span');
+					headerChevron.style.cssText = 'opacity:0.72;min-width:10px;text-align:center;';
+					header.appendChild(headerLabel);
+					header.appendChild(headerChevron);
+					const body = document.createElement('div');
+					body.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+					const setCollapsed = (collapsed) => {
+						body.style.display = collapsed ? 'none' : 'flex';
+						header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+						headerChevron.textContent = collapsed ? '>' : 'v';
+					};
+					header.addEventListener('click', (event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						setCollapsed(body.style.display !== 'none');
+					});
+					container.appendChild(header);
+					container.appendChild(body);
+					for (let index = 0; index < items.slice(0, limit).length; index += 1) {
+						const item = items[index];
+						const itemKey = seenInfo.itemKeys[index] || getOverviewAuditItemKey(item);
+						const isNewItem = unseenSet.has(itemKey);
+						const row = document.createElement('button');
+						row.type = 'button';
+						row.style.cssText = [
+							'display:block',
+							'width:100%',
+							'padding:4px 6px',
+							'border:none',
+							'border-radius:6px',
+							'background:rgba(255,255,255,0.06)',
+							'color:inherit',
+							'font:inherit',
+							'font-size:11px',
+							'line-height:1.3',
+							'text-align:left',
+							'word-break:break-word',
+							'cursor:pointer'
+						].join(';');
+						row.dataset.overviewListKey = seenInfo.listKey;
+						row.dataset.overviewItemKey = itemKey;
+						row.textContent = summarizeOverviewListItem(item);
+						row.title = 'Open audit detail';
+						applyOverviewAuditRowSeenStyle(row, isNewItem);
+						row.addEventListener('click', (event) => {
+							event.preventDefault();
+							event.stopPropagation();
+							const wasNew = row.dataset.overviewNewItem === 'true';
+							markOverviewAuditItemSeen(seenInfo.listKey, itemKey);
+							if (wasNew) {
+								applyOverviewAuditRowSeenStyle(row, false);
+								unseenSet.delete(itemKey);
+								updateOverviewAuditHeaderDelta(headerDelta, unseenSet.size);
+								if (!unseenSet.size) clearNewButton.style.display = 'none';
+							}
+							openOverviewAuditItemModal(item, {
+								sectionId: options.sectionId || '',
+								sectionTitle: options.sectionTitle || '',
+								payloadField: options.payloadField || '',
+								sourcePayload: options.sourcePayload,
+								index
+							});
+						});
+						body.appendChild(row);
+					}
+					if (items.length > limit) {
+						const more = document.createElement('div');
+						more.style.cssText = 'font-size:11px;line-height:1.25;opacity:0.68;';
+						more.textContent = `Showing ${limit} of ${items.length}; use Details for more.`;
+						body.appendChild(more);
+					}
+					setCollapsed(collapsedByDefault);
+					container.style.display = 'flex';
+				}
+
+				function renderOverviewAuditPreviewSeed(container, card) {
+					if (!container) return;
+					const payloadField = card.payload_field || card.browser_payload_field || '';
+					const count = normalizeOverviewCount(card.primary_count ?? card.browser_primary_count ?? 0);
+					if (!payloadField || count <= 0) {
+						container.innerHTML = '';
+						container.style.display = 'none';
+						return;
+					}
+					container.innerHTML = '';
+					const seed = document.createElement('div');
+					seed.style.cssText = 'font-size:11px;line-height:1.25;opacity:0.68;';
+					seed.textContent = `Loading ${payloadField} audit items...`;
+					container.appendChild(seed);
+					container.style.display = 'flex';
+				}
+
+				function getOverviewCardPayloadItems(card, payload) {
+					const payloadField = card.payload_field || card.browser_payload_field || '';
+					return overviewValueToItems(resolveOverviewPayloadValue(payload, payloadField));
+				}
+
+				async function loadOverviewCardAuditPreview(node) {
+					if (!node) return;
+					const sectionId = node.dataset.sectionId || '';
+					const path = node.dataset.httpGetPath || '';
+					const payloadField = node.dataset.payloadField || '';
+					const auditList = node.querySelector('.codex-browser-overview-audit-list');
+					if (!sectionId || !path || !payloadField || !auditList) return;
+					if (auditList.dataset.previewStatus === 'loaded') return;
+					if (codexOverviewSectionPreviewFetches.has(sectionId)) {
+						await codexOverviewSectionPreviewFetches.get(sectionId);
+						return;
+					}
+					const previewPromise = (async () => {
+						const cached = codexOverviewSectionDetailCache.get(sectionId);
+						const payload = cached || await fetchOverviewPath(path);
+						if (!payload) {
+							auditList.innerHTML = '';
+							const error = document.createElement('div');
+							error.style.cssText = 'font-size:11px;line-height:1.25;opacity:0.68;';
+							error.textContent = `No audit payload returned for ${path}.`;
+							auditList.appendChild(error);
+							auditList.style.display = 'flex';
+							auditList.dataset.previewStatus = 'failed';
+							return;
+						}
+						codexOverviewSectionDetailCache.set(sectionId, payload);
+						const items = getOverviewCardPayloadItems({ payload_field: payloadField }, payload);
+						if (!items.length) {
+							auditList.innerHTML = '';
+							const empty = document.createElement('div');
+							empty.style.cssText = 'font-size:11px;line-height:1.25;opacity:0.68;';
+							empty.textContent = `${payloadField} returned no list items.`;
+							auditList.appendChild(empty);
+							auditList.style.display = 'flex';
+							auditList.dataset.previewStatus = 'empty';
+							return;
+						}
+						renderOverviewAuditItems(auditList, items, {
+							limit: 12,
+							title: `${payloadField} (${items.length})`,
+							collapsed: true,
+							sectionId,
+							sectionTitle: node.dataset.sectionTitle || sectionId,
+							payloadField,
+							sourcePayload: payload
+						});
+						auditList.dataset.previewStatus = 'loaded';
+					})();
+					codexOverviewSectionPreviewFetches.set(sectionId, previewPromise);
+					try {
+						await previewPromise;
+					} finally {
+						codexOverviewSectionPreviewFetches.delete(sectionId);
+					}
+				}
+
+				function renderOverviewCardDetails(container, card, payload) {
+					if (!container) return;
+					container.innerHTML = '';
+					const payloadField = card.payload_field || card.browser_payload_field || '';
+					const source = payload || card;
+					appendOverviewKeyValue(container, 'tool', card.tool_name || card.browser_tool_name || '');
+					appendOverviewKeyValue(container, 'path', card.http_get_path || card.browser_http_get_path || '');
+					appendOverviewKeyValue(container, 'payload', payloadField || '(none)');
+					const payloadValue = resolveOverviewPayloadValue(source, payloadField);
+					if (payloadValue === source && payload === null) {
+						return;
+					}
+					const items = overviewValueToItems(payloadValue);
+					if (items.length) {
+						const list = document.createElement('div');
+						list.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-top:8px;';
+						container.appendChild(list);
+						renderOverviewAuditItems(list, items, {
+							limit: 40,
+							title: `${payloadField} (${items.length})`,
+							collapsed: false,
+							sectionId: card.id || card.browser_section_id || '',
+							sectionTitle: card.title || card.browser_section_title || '',
+							payloadField,
+							sourcePayload: payload
+						});
+						return;
+					}
+					const block = document.createElement('pre');
+					block.style.cssText = 'margin:8px 0 0 0;white-space:pre-wrap;word-break:break-word;';
+					block.textContent = formatOverviewValue(payloadValue);
+					container.appendChild(block);
+				}
+
+				async function refreshOverviewCardDetails(node) {
+					if (!node) return;
+					const details = node.querySelector('.codex-browser-overview-card-details');
+					const detailsButton = node.querySelector('.codex-browser-overview-details-button');
+					const refreshButton = node.querySelector('.codex-browser-overview-refresh-button');
+					const sectionId = node.dataset.sectionId || '';
+					const path = node.dataset.httpGetPath || '';
+					const payloadField = node.dataset.payloadField || '';
+					if (details) {
+						details.style.display = 'block';
+						details.textContent = 'Loading...';
+					}
+					if (detailsButton) detailsButton.textContent = 'Hide';
+					if (refreshButton) refreshButton.disabled = true;
+					const payload = await fetchOverviewPath(path);
+					if (refreshButton) refreshButton.disabled = false;
+					if (!details) return;
+					if (!payload) {
+						details.textContent = `No response for ${path || sectionId}`;
+						return;
+					}
+					codexOverviewSectionDetailCache.set(sectionId, payload);
+					details.dataset.loadedPayload = 'true';
+					renderOverviewCardDetails(details, {
+						id: sectionId,
+						tool_name: node.dataset.toolName || '',
+						http_get_path: path,
+						payload_field: payloadField
+					}, payload);
+					loadOverviewCardAuditPreview(node).catch(() => {});
 				}
 
 				function renderOverviewPlaceholder(container, title, summary) {
@@ -2127,7 +2932,9 @@
 						fallbackStatus,
 						fallbackStatus === 'pending'
 							? 'Waiting for browser-list overview.'
-							: 'Browser-list overview did not return this section yet.'
+							: codexBrowserListOverviewLastError
+								? `Browser-list overview fetch failed: ${codexBrowserListOverviewLastError}`
+								: 'Browser-list overview did not return this section yet.'
 					);
 					const byId = new Map(defaults.map((card) => [card.id, card]));
 					for (const card of incomingSections || []) {
@@ -2154,6 +2961,11 @@
 							container.appendChild(node);
 						} else {
 							updateOverviewCard(node, card);
+						}
+						const payloadField = card.payload_field || card.browser_payload_field || '';
+						const count = normalizeOverviewCount(card.primary_count ?? card.browser_primary_count ?? 0);
+						if (payloadField && count > 0) {
+							loadOverviewCardAuditPreview(node).catch(() => {});
 						}
 					}
 					Array.from(container.querySelectorAll('.codex-browser-overview-card')).forEach((node) => {
@@ -2386,8 +3198,17 @@
 					}
 					if (!remoteSessions.length) {
 						Array.from(container.querySelectorAll('.codex-remote-conversation-button')).forEach((button) => button.remove());
+						let empty = container.querySelector('.codex-remote-conversation-empty');
+						if (!empty) {
+							empty = document.createElement('div');
+							empty.className = 'codex-remote-conversation-empty';
+							empty.style.cssText = 'padding:8px 12px;font-size:12px;line-height:1.35;opacity:0.72;';
+							container.appendChild(empty);
+						}
+						empty.textContent = 'No remote audit records loaded yet. Tried /v1/remote-sessions and /overview/remote-sessions.';
 						return;
 					}
+					container.querySelector('.codex-remote-conversation-empty')?.remove();
 					for (const item of remoteSessions) {
 						const sessionId = item.session_id || item.sessionId;
 						if (!sessionId) continue;
@@ -2449,8 +3270,10 @@
 					if (heading) {
 						ensureSidebarSectionToggle('overview', heading, container);
 					}
-					renderOverviewCards(container, mergeBrowserOverviewSections([], 'pending'));
-					if (headingLabel) {
+					if (!container.querySelector('.codex-browser-overview-card')) {
+						renderOverviewCards(container, mergeBrowserOverviewSections([], 'pending'));
+					}
+					if (headingLabel && !codexBrowserListOverviewLastPayload) {
 						headingLabel.textContent = 'Overview (6)';
 					}
 					const payload = await fetchBrowserListOverview();
@@ -2476,6 +3299,7 @@
 						codexRemoteSessionsRenderQueued = true;
 						window.requestAnimationFrame(async () => {
 							codexRemoteSessionsRenderQueued = false;
+							installCodexSidebarResizeHandle();
 							ensureSkipMcpConfirmControl();
 							renderOverviewBrowserList().catch(() => {});
 							renderRemoteConversationList().catch(() => {});

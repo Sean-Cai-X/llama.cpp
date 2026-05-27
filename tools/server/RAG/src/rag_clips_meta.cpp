@@ -251,14 +251,14 @@ std::vector<std::string> SerializeRagClipsFacts(const RagClipsFactBundle & bundl
             << "(domain-name \"" << EscapeClipsString(node.domain_name) << "\"))";
         facts.push_back(out.str());
 
-        std::ostringstream concept;
-        concept << "(concept-node "
-                << "(node-id \"" << EscapeClipsString(node.node_id) << "\") "
-                << "(parent-id \"" << EscapeClipsString(node.parent_id) << "\") "
-                << "(anchor-level " << node.anchor_level << ") "
-                << "(concept-name \"" << EscapeClipsString(node.concept_name) << "\") "
-                << "(core-definition \"" << EscapeClipsString(node.core_definition) << "\"))";
-        facts.push_back(concept.str());
+        std::ostringstream concept_fact;
+        concept_fact << "(concept-node "
+                     << "(node-id \"" << EscapeClipsString(node.node_id) << "\") "
+                     << "(parent-id \"" << EscapeClipsString(node.parent_id) << "\") "
+                     << "(anchor-level " << node.anchor_level << ") "
+                     << "(concept-name \"" << EscapeClipsString(node.concept_name) << "\") "
+                     << "(core-definition \"" << EscapeClipsString(node.core_definition) << "\"))";
+        facts.push_back(concept_fact.str());
     }
 
     for (const auto & link : bundle.slice_links) {

@@ -3682,9 +3682,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_remote_session_turn(
         normalized["error_signature"] = get_string_or_empty(persisted_turn, "error_signature");
         normalized["solution_summary"] = get_string_or_empty(persisted_turn, "solution_summary");
         normalized["strategy_family"] = get_string_or_empty(persisted_turn, "strategy_family");
-        normalized["similarity_score"] = persisted_turn.contains("similarity_score")
-            ? persisted_turn["similarity_score"]
-            : 0.0;
+        normalized["similarity_score"] = persisted_turn.value("similarity_score", 0.0);
         normalized["vector_ready"] = persisted_turn.value("vector_ready", false);
         normalized["vector_skip_reason"] = get_string_or_empty(persisted_turn, "vector_skip_reason");
         normalized["timings"] = json{

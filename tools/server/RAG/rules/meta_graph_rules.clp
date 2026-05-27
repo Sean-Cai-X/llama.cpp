@@ -134,3 +134,127 @@
     (reason "verified-slice")
     (rule-id "rule.admission.verified-slice")
     (next-action "admit_to_cognitive_layer"))))
+
+(defrule reject-self-coupling-candidate
+  (coupling-candidate
+    (candidate-id ?candidate-id)
+    (from-slice ?slice-id)
+    (to-slice ?slice-id)
+    (candidate-type ?candidate-type)
+    (score ?score)
+    (status CANDIDATE))
+  =>
+  (assert (coupling-decision
+    (candidate-id ?candidate-id)
+    (decision REJECT)
+    (reason "SELF_COUPLING_NOT_ALLOWED")
+    (final-edge-type ?candidate-type)
+    (final-confidence ?score)
+    (status FINAL))))
+
+(defrule reject-coupling-below-policy-threshold
+  (coupling-policy
+    (task-type ?task-type)
+    (min-confidence ?min-confidence))
+  (coupling-candidate
+    (candidate-id ?candidate-id)
+    (candidate-type ?candidate-type)
+    (score ?score&:(< ?score ?min-confidence))
+    (status CANDIDATE))
+  =>
+  (assert (coupling-decision
+    (candidate-id ?candidate-id)
+    (decision REJECT)
+    (reason "COUPLING_SCORE_BELOW_POLICY_THRESHOLD")
+    (final-edge-type ?candidate-type)
+    (final-confidence ?score)
+    (status FINAL))))
+
+(defrule approve-coupling-candidate-by-policy
+  (coupling-policy
+    (task-type ?task-type)
+    (allowed-edge-types $?allowed-before ?candidate-type $?allowed-after)
+    (min-confidence ?min-confidence))
+  (coupling-candidate
+    (candidate-id ?candidate-id)
+    (from-slice ?from-slice)
+    (to-slice ?to-slice)
+    (candidate-type ?candidate-type)
+    (score ?score&:(>= ?score ?min-confidence))
+    (source ?source)
+    (status CANDIDATE))
+  (semantic-slice (slice-id ?from-slice) (status VERIFIED))
+  (semantic-slice (slice-id ?to-slice) (status VERIFIED))
+  (test (neq ?from-slice ?to-slice))
+  (not (coupling-decision (candidate-id ?candidate-id) (decision REJECT)))
+  =>
+  (assert (coupling-decision
+    (candidate-id ?candidate-id)
+    (decision APPROVE)
+    (reason "COUPLING_ALLOWED_BY_POLICY")
+    (final-edge-type ?candidate-type)
+    (final-confidence ?score)
+    (status FINAL)))
+  (assert (slice-edge
+    (edge-id ?candidate-id)
+    (from-slice ?from-slice)
+    (to-slice ?to-slice)
+    (edge-type ?candidate-type)
+    (confidence ?score)
+    (source ?source)
+    (evidence-ref-a "")
+    (evidence-ref-b "")
+    (status VERIFIED))))
+
+(defrule reject-fact-claim-without-evidence
+  (viewpoint-candidate
+    (viewpoint-id ?viewpoint-id)
+    (claim-type FACT_CLAIM)
+    (status CANDIDATE))
+  (not (evidence-binding
+    (viewpoint-id ?viewpoint-id)
+    (match-status MATCHED)
+    (status VERIFIED)))
+  =>
+  (assert (viewpoint-decision
+    (viewpoint-id ?viewpoint-id)
+    (decision REJECT)
+    (reason "FACT_CLAIM_WITHOUT_VERIFIED_EVIDENCE")
+    (final-confidence 0.0)
+    (action "block")
+    (status FINAL))))
+
+(defrule downgrade-speculation-viewpoint
+  (viewpoint-candidate
+    (viewpoint-id ?viewpoint-id)
+    (claim-type SPECULATION)
+    (confidence ?confidence)
+    (status CANDIDATE))
+  =>
+  (assert (viewpoint-decision
+    (viewpoint-id ?viewpoint-id)
+    (decision DOWNGRADE_TO_HYPOTHESIS)
+    (reason "SPECULATION_CANNOT_BE_TREATED_AS_FACT")
+    (final-confidence ?confidence)
+    (action "label_as_hypothesis")
+    (status FINAL))))
+
+(defrule approve-supported-fact-viewpoint
+  (viewpoint-candidate
+    (viewpoint-id ?viewpoint-id)
+    (claim-type FACT_CLAIM)
+    (confidence ?confidence)
+    (status CANDIDATE))
+  (evidence-binding
+    (viewpoint-id ?viewpoint-id)
+    (match-status MATCHED)
+    (status VERIFIED))
+  (not (viewpoint-decision (viewpoint-id ?viewpoint-id) (decision REJECT)))
+  =>
+  (assert (viewpoint-decision
+    (viewpoint-id ?viewpoint-id)
+    (decision APPROVE)
+    (reason "FACT_CLAIM_SUPPORTED_BY_VERIFIED_EVIDENCE")
+    (final-confidence ?confidence)
+    (action "admit_to_verified_fact_layer")
+    (status FINAL))))

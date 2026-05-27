@@ -225,6 +225,11 @@ bool should_capture_fact_text(Fact * fact) {
         (std::strcmp(template_name, "slice-requires-repair") == 0) ||
         (std::strcmp(template_name, "node-has-slice") == 0) ||
         (std::strcmp(template_name, "graph-governed") == 0) ||
+        (std::strcmp(template_name, "semantic-slice") == 0) ||
+        (std::strcmp(template_name, "slice-edge") == 0) ||
+        (std::strcmp(template_name, "coupling-decision") == 0) ||
+        (std::strcmp(template_name, "viewpoint-decision") == 0) ||
+        (std::strcmp(template_name, "viewpoint-validation") == 0) ||
         (std::strcmp(template_name, "query-context") == 0);
 }
 #endif
