@@ -237,6 +237,55 @@ RagBridgeResult RagIntegrationBridge::build_clips_run_response(const json & body
     return result;
 }
 
+RagBridgeResult RagIntegrationBridge::build_review_observation_response(const json & body) const {
+    if (!runtime_ || !runtime_->enabled()) {
+        return runtime_unavailable();
+    }
+
+    RagBridgeResult result;
+    result.ok = true;
+    result.payload = runtime_->build_review_observation_payload(body);
+    if (!result.payload.value("ok", false)) {
+        result.ok = false;
+        result.error = RagBridgeError::invalid_request;
+        result.message = result.payload.value("message", "invalid review observation request");
+        result.payload = json::object();
+    }
+    return result;
+}
+
+RagBridgeResult RagIntegrationBridge::build_storage_lookup_response(const json & body) const {
+    if (!runtime_ || !runtime_->enabled()) {
+        return runtime_unavailable();
+    }
+
+    const std::string kind = body.value("kind", "");
+    if (kind.empty()) {
+        return {false, RagBridgeError::invalid_request, "\"kind\" must be provided", json::object()};
+    }
+
+    RagBridgeResult result;
+    result.ok = true;
+    result.payload = runtime_->build_storage_lookup_payload(body);
+    return result;
+}
+
+RagBridgeResult RagIntegrationBridge::build_storage_page_response(const json & body) const {
+    if (!runtime_ || !runtime_->enabled()) {
+        return runtime_unavailable();
+    }
+
+    const std::string kind = body.value("kind", "");
+    if (kind.empty()) {
+        return {false, RagBridgeError::invalid_request, "\"kind\" must be provided", json::object()};
+    }
+
+    RagBridgeResult result;
+    result.ok = true;
+    result.payload = runtime_->build_storage_page_payload(body);
+    return result;
+}
+
 bool RagIntegrationBridge::maybe_inject_chat_context(json & body, std::string * error_message) const {
     if (!runtime_ || !runtime_->enabled()) {
         if (error_message) {

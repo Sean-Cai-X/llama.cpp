@@ -29,6 +29,7 @@ std::vector<std::string> rocksdb_column_families() {
         "vector",
         "clips",
         "knowledge",
+        "review",
         "audit",
         "trace",
         "coupling",
@@ -64,11 +65,85 @@ json read_json_file_or_object(const std::string & path) {
     }
 }
 
+json parse_backend_json_value(const std::string & raw_value) {
+    if (raw_value.empty()) {
+        return json();
+    }
+
+    json parsed = json::parse(raw_value, nullptr, false);
+    if (parsed.is_discarded()) {
+        return json{{"raw_value", raw_value}};
+    }
+    return parsed;
+}
+
+#if defined(LLAMA_SERVER_RAG_ROCKSDB_BACKEND)
+rocksdb::Status open_rocksdb_read_only(
+        const std::string & db_path,
+        std::vector<rocksdb::ColumnFamilyDescriptor> & descriptors,
+        std::vector<rocksdb::ColumnFamilyHandle *> & handles,
+        std::unique_ptr<rocksdb::DB> & db) {
+    rocksdb::DBOptions db_options;
+    db_options.create_if_missing = false;
+    return rocksdb::DB::OpenForReadOnly(
+        db_options,
+        db_path,
+        descriptors,
+        &handles,
+        &db,
+        false);
+}
+#endif
+
 void write_json_file_if_missing(const std::string & path, const json & value) {
     if (path.empty() || std::filesystem::exists(path)) {
         return;
     }
     rag_storage_write_json_file(path, value);
+}
+
+json read_backend_value_from_snapshot(
+        const std::string & base_path,
+        const std::string & column_family,
+        const std::string & key) {
+    const json snapshot = read_json_file_or_object(rag_storage_kv_snapshot_path(base_path));
+    const json families = snapshot.value("column_families", json::object());
+    if (!families.is_object() || !families.contains(column_family) || !families.at(column_family).is_object()) {
+        return json();
+    }
+    const json family = families.at(column_family);
+    if (!family.contains(key)) {
+        return json();
+    }
+    return family.at(key);
+}
+
+json scan_backend_prefix_from_snapshot(
+        const std::string & base_path,
+        const std::string & column_family,
+        const std::string & key_prefix,
+        int limit) {
+    json records = json::array();
+    const json snapshot = read_json_file_or_object(rag_storage_kv_snapshot_path(base_path));
+    const json families = snapshot.value("column_families", json::object());
+    if (!families.is_object() || !families.contains(column_family) || !families.at(column_family).is_object()) {
+        return records;
+    }
+
+    const json family = families.at(column_family);
+    for (auto it = family.begin(); it != family.end(); ++it) {
+        if (limit > 0 && static_cast<int>(records.size()) >= limit) {
+            break;
+        }
+        if (it.key().rfind(key_prefix, 0) != 0) {
+            continue;
+        }
+        records.push_back(json{
+            {"key", it.key()},
+            {"value", it.value()},
+        });
+    }
+    return records;
 }
 
 json make_backend_put(
@@ -324,6 +399,13 @@ json build_database_contract(const std::string & base_path) {
             "viewpoint_by_slice:{slice_id}:{viewpoint_id}",
             "viewpoint_by_trace:{trace_id}:{viewpoint_id}",
         })},
+        {"review", json::array({
+            "review:{observation_id}",
+            "review_by_trace:{trace_id}:{observation_id}",
+            "review_by_query:{query_id}:{observation_id}",
+            "review_by_bucket:{test_bucket}:{observation_id}",
+            "review_by_gap:{coverage_gap}:{observation_id}",
+        })},
         {"audit", json::array({
             "audit:{trace_id}:{seq}",
             "audit_by_request:{request_id}:{seq}",
@@ -347,6 +429,7 @@ json build_database_contract(const std::string & base_path) {
         {"viewpoint_candidate", "rag_viewpoint_candidate_v1"},
         {"evidence_binding", "rag_evidence_binding_v1"},
         {"viewpoint_decision", "rag_viewpoint_decision_v1"},
+        {"review_observation", "rag_review_observation_v1"},
         {"audit_event", "rag_audit_event_v1"},
         {"trace_debug", "rag_trace_debug_v1"},
     };
@@ -364,6 +447,7 @@ json build_database_contract(const std::string & base_path) {
             {"vector", logical_keyspaces["vector"]},
             {"clips", logical_keyspaces["clips"]},
             {"knowledge", logical_keyspaces["knowledge"]},
+            {"review", logical_keyspaces["review"]},
             {"coupling", logical_keyspaces["coupling"]},
             {"viewpoint", logical_keyspaces["viewpoint"]},
             {"audit", logical_keyspaces["audit"]},
@@ -406,6 +490,10 @@ json build_database_contract(const std::string & base_path) {
                     {"viewpoint_store", rag_storage_viewpoint_store_path(base_path)},
                     {"viewpoint_index_pattern", base_path + ".viewpoint.{viewpoint_id}.jsonl"},
                     {"viewpoint_baseline", rag_storage_viewpoint_baseline_path(base_path)},
+                    {"review_store", rag_storage_review_store_path(base_path)},
+                    {"review_index_pattern", base_path + ".review_observation.{observation_id}.jsonl"},
+                    {"review_trace_index_pattern", base_path + ".review_trace.{trace_id}.jsonl"},
+                    {"review_bucket_index_pattern", base_path + ".review_bucket.{test_bucket}.jsonl"},
                     {"coupling_graph", rag_storage_coupling_graph_path(base_path)},
                     {"coupling_slice_index_pattern", base_path + ".coupling_slice.{slice_id}.jsonl"},
                     {"coupling_baseline", rag_storage_coupling_baseline_path(base_path)},
@@ -469,6 +557,15 @@ json build_database_contract(const std::string & base_path) {
                         "decision TEXT",
                         "viewpoint_json TEXT",
                     })},
+                    {"rag_review_observation", json::array({
+                        "observation_id TEXT PRIMARY KEY",
+                        "trace_id TEXT",
+                        "query_id TEXT",
+                        "test_bucket TEXT",
+                        "result_stage TEXT",
+                        "coverage_gap TEXT",
+                        "observation_json TEXT",
+                    })},
                     {"rag_audit_event", json::array({
                         "trace_id TEXT",
                         "seq INTEGER",
@@ -521,6 +618,169 @@ rag_storage_json rag_storage_make_backend_put(
         const rag_storage_json & value,
         const std::string & record_model) {
     return make_backend_put(column_family, key, value, record_model);
+}
+
+rag_storage_json rag_storage_read_backend_value(
+        const std::string & base_path,
+        const std::string & column_family,
+        const std::string & key) {
+    json result = {
+        {"record_model", "rag_storage_backend_lookup_v1"},
+        {"base_path", base_path},
+        {"column_family", column_family},
+        {"key", key},
+        {"backend", "not_found"},
+        {"found", false},
+    };
+
+    if (base_path.empty() || column_family.empty() || key.empty()) {
+        result["error"] = "empty_base_column_family_or_key";
+        return result;
+    }
+
+#if defined(LLAMA_SERVER_RAG_ROCKSDB_BACKEND)
+    try {
+        const std::string db_path = rocksdb_database_path_for_base(base_path);
+        std::vector<rocksdb::ColumnFamilyDescriptor> descriptors;
+        rocksdb::ColumnFamilyOptions cf_options;
+        for (const std::string & family_name : rocksdb_column_families()) {
+            descriptors.emplace_back(family_name, cf_options);
+        }
+
+        std::unique_ptr<rocksdb::DB> db;
+        std::vector<rocksdb::ColumnFamilyHandle *> handles;
+        rocksdb::Status open_status = open_rocksdb_read_only(db_path, descriptors, handles, db);
+        if (open_status.ok()) {
+            rocksdb::ColumnFamilyHandle * selected_handle = nullptr;
+            for (size_t i = 0; i < descriptors.size() && i < handles.size(); ++i) {
+                if (descriptors[i].name == column_family) {
+                    selected_handle = handles[i];
+                    break;
+                }
+            }
+
+            if (selected_handle != nullptr) {
+                std::string raw_value;
+                const rocksdb::Status get_status = db->Get(rocksdb::ReadOptions(), selected_handle, key, &raw_value);
+                if (get_status.ok()) {
+                    result["backend"] = "rocksdb";
+                    result["found"] = true;
+                    result["value"] = parse_backend_json_value(raw_value);
+                } else if (!get_status.IsNotFound()) {
+                    result["rocksdb_error"] = get_status.ToString();
+                }
+            }
+
+            for (auto * handle : handles) {
+                db->DestroyColumnFamilyHandle(handle);
+            }
+        } else {
+            result["rocksdb_error"] = open_status.ToString();
+        }
+    } catch (...) {
+        result["rocksdb_error"] = "rocksdb_exception";
+    }
+#else
+    result["rocksdb_error"] = "LLAMA_SERVER_RAG_ROCKSDB_BACKEND not enabled";
+#endif
+
+    if (!result.value("found", false)) {
+        const json snapshot_value = read_backend_value_from_snapshot(base_path, column_family, key);
+        if (!snapshot_value.is_null() && !(snapshot_value.is_object() && snapshot_value.empty())) {
+            result["backend"] = "kv_snapshot";
+            result["found"] = true;
+            result["value"] = snapshot_value;
+        }
+    }
+
+    return result;
+}
+
+rag_storage_json rag_storage_scan_backend_prefix(
+        const std::string & base_path,
+        const std::string & column_family,
+        const std::string & key_prefix,
+        int limit) {
+    json result = {
+        {"record_model", "rag_storage_backend_scan_v1"},
+        {"base_path", base_path},
+        {"column_family", column_family},
+        {"key_prefix", key_prefix},
+        {"limit", limit},
+        {"backend", "not_found"},
+        {"record_count", 0},
+        {"records", json::array()},
+    };
+
+    if (base_path.empty() || column_family.empty() || key_prefix.empty()) {
+        result["error"] = "empty_base_column_family_or_key_prefix";
+        return result;
+    }
+
+#if defined(LLAMA_SERVER_RAG_ROCKSDB_BACKEND)
+    try {
+        const std::string db_path = rocksdb_database_path_for_base(base_path);
+        std::vector<rocksdb::ColumnFamilyDescriptor> descriptors;
+        rocksdb::ColumnFamilyOptions cf_options;
+        for (const std::string & family_name : rocksdb_column_families()) {
+            descriptors.emplace_back(family_name, cf_options);
+        }
+
+        std::unique_ptr<rocksdb::DB> db;
+        std::vector<rocksdb::ColumnFamilyHandle *> handles;
+        rocksdb::Status open_status = open_rocksdb_read_only(db_path, descriptors, handles, db);
+        if (open_status.ok()) {
+            rocksdb::ColumnFamilyHandle * selected_handle = nullptr;
+            for (size_t i = 0; i < descriptors.size() && i < handles.size(); ++i) {
+                if (descriptors[i].name == column_family) {
+                    selected_handle = handles[i];
+                    break;
+                }
+            }
+
+            if (selected_handle != nullptr) {
+                std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(rocksdb::ReadOptions(), selected_handle));
+                for (it->Seek(key_prefix);
+                     it->Valid() && (limit <= 0 || static_cast<int>(result["records"].size()) < limit);
+                     it->Next()) {
+                    const std::string scanned_key = it->key().ToString();
+                    if (scanned_key.rfind(key_prefix, 0) != 0) {
+                        break;
+                    }
+                    result["records"].push_back(json{
+                        {"key", scanned_key},
+                        {"value", parse_backend_json_value(it->value().ToString())},
+                    });
+                }
+                if (!it->status().ok()) {
+                    result["rocksdb_error"] = it->status().ToString();
+                }
+            }
+
+            for (auto * handle : handles) {
+                db->DestroyColumnFamilyHandle(handle);
+            }
+        } else {
+            result["rocksdb_error"] = open_status.ToString();
+        }
+    } catch (...) {
+        result["rocksdb_error"] = "rocksdb_exception";
+    }
+#else
+    result["rocksdb_error"] = "LLAMA_SERVER_RAG_ROCKSDB_BACKEND not enabled";
+#endif
+
+    if (result["records"].empty()) {
+        result["records"] = scan_backend_prefix_from_snapshot(base_path, column_family, key_prefix, limit);
+        if (!result["records"].empty()) {
+            result["backend"] = "kv_snapshot";
+        }
+    } else {
+        result["backend"] = "rocksdb";
+    }
+
+    result["record_count"] = result["records"].size();
+    return result;
 }
 
 void rag_storage_append_backend_write_batch(
@@ -586,6 +846,31 @@ std::string rag_storage_viewpoint_index_path(const std::string & base_path, cons
 
 std::string rag_storage_viewpoint_baseline_path(const std::string & base_path) {
     return base_path.empty() ? "" : base_path + ".baseline.viewpoint_validation.json";
+}
+
+std::string rag_storage_review_store_path(const std::string & base_path) {
+    return base_path.empty() ? "" : base_path + ".review_observations.json";
+}
+
+std::string rag_storage_review_index_path(const std::string & base_path, const std::string & observation_id) {
+    if (base_path.empty() || observation_id.empty()) {
+        return "";
+    }
+    return base_path + ".review_observation." + rag_storage_sanitize_token(observation_id) + ".jsonl";
+}
+
+std::string rag_storage_review_trace_index_path(const std::string & base_path, const std::string & trace_id) {
+    if (base_path.empty() || trace_id.empty()) {
+        return "";
+    }
+    return base_path + ".review_trace." + rag_storage_sanitize_token(trace_id) + ".jsonl";
+}
+
+std::string rag_storage_review_bucket_index_path(const std::string & base_path, const std::string & test_bucket) {
+    if (base_path.empty() || test_bucket.empty()) {
+        return "";
+    }
+    return base_path + ".review_bucket." + rag_storage_sanitize_token(test_bucket) + ".jsonl";
 }
 
 std::string rag_storage_coupling_graph_path(const std::string & base_path) {
@@ -913,6 +1198,10 @@ void RagFileStorage::save_manifest() const {
             {"viewpoint_store_path", rag_storage_viewpoint_store_path(base_path_)},
             {"viewpoint_index_pattern", base_path_ + ".viewpoint.{viewpoint_id}.jsonl"},
             {"viewpoint_baseline_path", rag_storage_viewpoint_baseline_path(base_path_)},
+            {"review_store_path", rag_storage_review_store_path(base_path_)},
+            {"review_index_pattern", base_path_ + ".review_observation.{observation_id}.jsonl"},
+            {"review_trace_index_pattern", base_path_ + ".review_trace.{trace_id}.jsonl"},
+            {"review_bucket_index_pattern", base_path_ + ".review_bucket.{test_bucket}.jsonl"},
             {"coupling_graph_path", rag_storage_coupling_graph_path(base_path_)},
             {"coupling_slice_index_pattern", base_path_ + ".coupling_slice.{slice_id}.jsonl"},
             {"coupling_baseline_path", rag_storage_coupling_baseline_path(base_path_)},
@@ -1017,6 +1306,20 @@ void RagFileStorage::save_manifest() const {
                     "viewpoint:decision:{viewpoint_id}",
                     "viewpoint_by_slice:{slice_id}:{viewpoint_id}",
                     "viewpoint_by_trace:{trace_id}:{viewpoint_id}",
+                })},
+            }},
+            {"review_observation", {
+                {"path", rag_storage_review_store_path(base_path_)},
+                {"review_index_pattern", base_path_ + ".review_observation.{observation_id}.jsonl"},
+                {"trace_index_pattern", base_path_ + ".review_trace.{trace_id}.jsonl"},
+                {"bucket_index_pattern", base_path_ + ".review_bucket.{test_bucket}.jsonl"},
+                {"record_model", "rag_review_observation_v1"},
+                {"keys", json::array({
+                    "review:{observation_id}",
+                    "review_by_trace:{trace_id}:{observation_id}",
+                    "review_by_query:{query_id}:{observation_id}",
+                    "review_by_bucket:{test_bucket}:{observation_id}",
+                    "review_by_gap:{coverage_gap}:{observation_id}",
                 })},
             }},
             {"vector_slice_map", {
@@ -1142,6 +1445,18 @@ void RagFileStorage::save_manifest() const {
             {"viewpoint_validations", json::object()},
             {"viewpoint_decisions", json::object()},
             {"viewpoint_count", 0},
+        });
+    write_json_file_if_missing(
+        rag_storage_review_store_path(base_path_),
+        json{
+            {"schema_version", 1},
+            {"record_model", "rag_review_observation_store_v1"},
+            {"index_name", base_path_},
+            {"status", "contract_ready"},
+            {"review_observations", json::object()},
+            {"by_test_bucket", json::object()},
+            {"by_trace", json::object()},
+            {"observation_count", 0},
         });
 }
 

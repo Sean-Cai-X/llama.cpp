@@ -167,6 +167,11 @@ int main(int argc, char ** argv) {
         routes.post_rag_search             = models_routes->proxy_post;
         routes.post_rag_explain            = models_routes->proxy_post;
         routes.post_rag_chat_context       = models_routes->proxy_post;
+        routes.post_rag_review_observe     = models_routes->proxy_post;
+        routes.post_rag_storage_lookup     = models_routes->proxy_post;
+        routes.get_rag_storage_lookup      = models_routes->proxy_get;
+        routes.post_rag_storage_page       = models_routes->proxy_post;
+        routes.get_rag_storage_page        = models_routes->proxy_get;
         routes.get_debug_trace             = models_routes->proxy_get;
         routes.get_debug_request           = models_routes->proxy_get;
         routes.get_debug_goal              = models_routes->proxy_get;
@@ -330,6 +335,11 @@ int main(int argc, char ** argv) {
     ctx_http.post("/rag/clips/meta",           ex_wrapper(routes.post_rag_clips_meta));
     ctx_http.get ("/rag/clips/manifest",       ex_wrapper(routes.get_rag_clips_manifest));
     ctx_http.post("/rag/clips/run",            ex_wrapper(routes.post_rag_clips_run));
+    ctx_http.post("/rag/review/observe",       ex_wrapper(routes.post_rag_review_observe));
+    ctx_http.post("/rag/storage/lookup",       ex_wrapper(routes.post_rag_storage_lookup));
+    ctx_http.get ("/rag/storage/lookup",       ex_wrapper(routes.get_rag_storage_lookup));
+    ctx_http.post("/rag/storage/page",         ex_wrapper(routes.post_rag_storage_page));
+    ctx_http.get ("/rag/storage/page",         ex_wrapper(routes.get_rag_storage_page));
     ctx_http.get ("/v1/debug/trace/:trace_id", ex_wrapper(routes.get_debug_trace));
     ctx_http.get ("/v1/debug/request/:request_id", ex_wrapper(routes.get_debug_request));
     ctx_http.get ("/v1/debug/goal/:goal_id",   ex_wrapper(routes.get_debug_goal));

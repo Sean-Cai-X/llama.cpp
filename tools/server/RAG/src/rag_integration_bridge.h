@@ -36,6 +36,9 @@ public:
     RagBridgeResult build_clips_meta_response(const json & body) const;
     RagBridgeResult build_clips_manifest_response() const;
     RagBridgeResult build_clips_run_response(const json & body) const;
+    RagBridgeResult build_review_observation_response(const json & body) const;
+    RagBridgeResult build_storage_lookup_response(const json & body) const;
+    RagBridgeResult build_storage_page_response(const json & body) const;
 
     bool maybe_inject_chat_context(json & body, std::string * error_message = nullptr) const;
 

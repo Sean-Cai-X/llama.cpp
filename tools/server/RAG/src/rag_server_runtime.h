@@ -58,6 +58,9 @@ public:
     json build_clips_meta_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const;
     json build_clips_manifest_payload() const;
     json build_clips_run_payload(const json & body, const std::string & query, int top_k, int timeout_ms) const;
+    json build_review_observation_payload(const json & body) const;
+    json build_storage_lookup_payload(const json & body) const;
+    json build_storage_page_payload(const json & body) const;
     bool inject_chat_context(json & body, const std::string & query, int top_k, int timeout_ms) const;
 
     json build_status_payload() const;
@@ -93,6 +96,7 @@ private:
     bool running_ = false;
 
     mutable std::mutex status_mutex_;
+    mutable std::mutex review_store_mutex_;
     std::string last_error_;
     std::string last_job_kind_ = "none";
     bool last_reset_before_add_ = false;

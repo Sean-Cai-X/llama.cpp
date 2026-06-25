@@ -4580,6 +4580,56 @@ this->post_rag_clips_run = [this](const server_http_req & req) {
         });
 };
 
+this->post_rag_review_observe = [this](const server_http_req & req) {
+    return server_rag_routes::handle_review_observe(
+        req,
+        params,
+        ctx_server.rag_runtime.get(),
+        [this]() {
+            return create_response();
+        });
+};
+
+this->get_rag_storage_lookup = [this](const server_http_req & req) {
+    return server_rag_routes::handle_storage_lookup(
+        req,
+        params,
+        ctx_server.rag_runtime.get(),
+        [this]() {
+            return create_response();
+        });
+};
+
+this->post_rag_storage_lookup = [this](const server_http_req & req) {
+    return server_rag_routes::handle_storage_lookup(
+        req,
+        params,
+        ctx_server.rag_runtime.get(),
+        [this]() {
+            return create_response();
+        });
+};
+
+this->get_rag_storage_page = [this](const server_http_req & req) {
+    return server_rag_routes::handle_storage_page(
+        req,
+        params,
+        ctx_server.rag_runtime.get(),
+        [this]() {
+            return create_response();
+        });
+};
+
+this->post_rag_storage_page = [this](const server_http_req & req) {
+    return server_rag_routes::handle_storage_page(
+        req,
+        params,
+        ctx_server.rag_runtime.get(),
+        [this]() {
+            return create_response();
+        });
+};
+
 this->get_debug_trace = [this](const server_http_req & req) {
     auto res = create_response(true);
     const std::string trace_id = req.get_param("trace_id");

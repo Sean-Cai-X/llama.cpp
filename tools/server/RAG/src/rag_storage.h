@@ -40,6 +40,10 @@ std::string rag_storage_kv_snapshot_path(const std::string & base_path);
 std::string rag_storage_viewpoint_store_path(const std::string & base_path);
 std::string rag_storage_viewpoint_index_path(const std::string & base_path, const std::string & viewpoint_id);
 std::string rag_storage_viewpoint_baseline_path(const std::string & base_path);
+std::string rag_storage_review_store_path(const std::string & base_path);
+std::string rag_storage_review_index_path(const std::string & base_path, const std::string & observation_id);
+std::string rag_storage_review_trace_index_path(const std::string & base_path, const std::string & trace_id);
+std::string rag_storage_review_bucket_index_path(const std::string & base_path, const std::string & test_bucket);
 std::string rag_storage_coupling_graph_path(const std::string & base_path);
 std::string rag_storage_coupling_slice_index_path(const std::string & base_path, const std::string & slice_id);
 std::string rag_storage_coupling_baseline_path(const std::string & base_path);
@@ -79,6 +83,15 @@ rag_storage_json rag_storage_make_backend_put(
     const std::string & key,
     const rag_storage_json & value,
     const std::string & record_model);
+rag_storage_json rag_storage_read_backend_value(
+    const std::string & base_path,
+    const std::string & column_family,
+    const std::string & key);
+rag_storage_json rag_storage_scan_backend_prefix(
+    const std::string & base_path,
+    const std::string & column_family,
+    const std::string & key_prefix,
+    int limit);
 void rag_storage_append_backend_write_batch(
     const std::string & base_path,
     const std::string & batch_id,

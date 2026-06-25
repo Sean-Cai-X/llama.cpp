@@ -74,4 +74,22 @@ std::unique_ptr<server_res_generator> handle_clips_run(
         RagServerRuntime * rag_runtime,
         const response_factory & make_response);
 
+std::unique_ptr<server_res_generator> handle_review_observe(
+        const server_http_req & req,
+        const common_params & params,
+        RagServerRuntime * rag_runtime,
+        const response_factory & make_response);
+
+std::unique_ptr<server_res_generator> handle_storage_lookup(
+        const server_http_req & req,
+        const common_params & params,
+        RagServerRuntime * rag_runtime,
+        const response_factory & make_response);
+
+std::unique_ptr<server_res_generator> handle_storage_page(
+        const server_http_req & req,
+        const common_params & params,
+        RagServerRuntime * rag_runtime,
+        const response_factory & make_response);
+
 } // namespace server_rag_routes

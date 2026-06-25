@@ -39,6 +39,17 @@ std::unique_ptr<server_res_generator> finish_rag_response(
 
 namespace server_rag_routes {
 
+int parse_int_param(const std::string & value, int fallback) {
+    if (value.empty()) {
+        return fallback;
+    }
+    try {
+        return std::stoi(value);
+    } catch (...) {
+        return fallback;
+    }
+}
+
 bool maybe_inject_chat_context(
         const common_params & params,
         RagServerRuntime * rag_runtime,
@@ -236,6 +247,97 @@ std::unique_ptr<server_res_generator> handle_clips_run(
     LOG_INF("%s: /rag/clips/run response serialized\n", __func__);
 
     return res;
+}
+
+std::unique_ptr<server_res_generator> handle_review_observe(
+        const server_http_req & req,
+        const common_params & params,
+        RagServerRuntime * rag_runtime,
+        const response_factory & make_response) {
+    auto res = make_response();
+
+    RagIntegrationBridge rag_bridge(params, rag_runtime);
+    const RagBridgeResult result =
+        rag_bridge.build_review_observation_response(json::parse(req.body));
+
+    if (result.ok) {
+        server_trace_registry::record_stage(
+            result.payload.value("trace_id", ""),
+            "rag_review_observe",
+            result.payload);
+    }
+
+    return finish_rag_response(std::move(res), result);
+}
+
+std::unique_ptr<server_res_generator> handle_storage_lookup(
+        const server_http_req & req,
+        const common_params & params,
+        RagServerRuntime * rag_runtime,
+        const response_factory & make_response) {
+    auto res = make_response();
+
+    json body = {
+        {"kind", req.get_param("kind")},
+        {"id", req.get_param("id")},
+        {"slice_id", req.get_param("slice_id")},
+        {"trace_id", req.get_param("trace_id")},
+        {"query_id", req.get_param("query_id")},
+        {"node_id", req.get_param("node_id")},
+        {"edge_id", req.get_param("edge_id")},
+        {"observation_id", req.get_param("observation_id")},
+        {"test_bucket", req.get_param("test_bucket")},
+        {"coverage_gap", req.get_param("coverage_gap")},
+        {"limit", parse_int_param(req.get_param("limit"), 32)},
+    };
+    if (!req.body.empty()) {
+        json parsed = json::parse(req.body, nullptr, false);
+        if (!parsed.is_discarded() && parsed.is_object()) {
+            for (auto it = parsed.begin(); it != parsed.end(); ++it) {
+                body[it.key()] = it.value();
+            }
+        }
+    }
+
+    RagIntegrationBridge rag_bridge(params, rag_runtime);
+    const RagBridgeResult result = rag_bridge.build_storage_lookup_response(body);
+
+    return finish_rag_response(std::move(res), result);
+}
+
+std::unique_ptr<server_res_generator> handle_storage_page(
+        const server_http_req & req,
+        const common_params & params,
+        RagServerRuntime * rag_runtime,
+        const response_factory & make_response) {
+    auto res = make_response();
+
+    json body = {
+        {"kind", req.get_param("kind")},
+        {"trace_id", req.get_param("trace_id")},
+        {"query_id", req.get_param("query_id")},
+        {"run_kind", req.get_param("run_kind")},
+        {"fact_type", req.get_param("fact_type")},
+        {"test_bucket", req.get_param("test_bucket")},
+        {"coverage_gap", req.get_param("coverage_gap")},
+        {"result_stage", req.get_param("result_stage")},
+        {"coverage_status", req.get_param("coverage_status")},
+        {"limit", parse_int_param(req.get_param("limit"), 32)},
+        {"offset", parse_int_param(req.get_param("offset"), 0)},
+    };
+    if (!req.body.empty()) {
+        json parsed = json::parse(req.body, nullptr, false);
+        if (!parsed.is_discarded() && parsed.is_object()) {
+            for (auto it = parsed.begin(); it != parsed.end(); ++it) {
+                body[it.key()] = it.value();
+            }
+        }
+    }
+
+    RagIntegrationBridge rag_bridge(params, rag_runtime);
+    const RagBridgeResult result = rag_bridge.build_storage_page_response(body);
+
+    return finish_rag_response(std::move(res), result);
 }
 
 } // namespace server_rag_routes
